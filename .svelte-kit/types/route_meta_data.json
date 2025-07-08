@@ -1,10 +1,8 @@
 {
-	"/": [
-		"src/routes/+layout.server.ts",
-		"src/routes/+layout.server.ts"
+	"/(app)": [
+		"src/routes/(app)/+layout.server.ts",
+		"src/routes/(app)/+layout.server.ts"
 	],
-	"/auth/callback": [
-		"src/routes/+layout.server.ts",
-		"src/routes/+layout.server.ts"
-	]
+	"/": [],
+	"/auth/callback": []
 }

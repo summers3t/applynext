@@ -5,14 +5,15 @@ export const nodes = [
 	() => import('./nodes/1'),
 	() => import('./nodes/2'),
 	() => import('./nodes/3'),
-	() => import('./nodes/4')
+	() => import('./nodes/4'),
+	() => import('./nodes/5')
 ];
 
-export const server_loads = [0];
+export const server_loads = [2];
 
 export const dictionary = {
-		"/": [3],
-		"/auth/callback": [4,[2]]
+		"/(app)": [4,[2]],
+		"/auth/callback": [5,[3]]
 	};
 
 export const hooks = {
