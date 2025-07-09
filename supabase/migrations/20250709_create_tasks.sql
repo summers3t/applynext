@@ -65,25 +65,14 @@ CREATE POLICY "Users: Self access"
 CREATE POLICY "Users: Self update"
   ON public.users FOR UPDATE USING (id = auth.uid());
 
--- Roles: Only admins can view/modify
-CREATE POLICY "Roles: Admin only"
-  ON public.roles FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON r.id = ur.role_id
-      WHERE ur.user_id = auth.uid() AND r.role_name = 'admin'
-    )
-  );
+-- Roles: Any logged in user can read
+CREATE POLICY "Roles: Any logged in user can read"
+  ON public.roles FOR SELECT USING (auth.uid() IS NOT NULL);
 
--- User_Roles: Only admins manage roles
-CREATE POLICY "UserRoles: Admin only"
-  ON public.user_roles FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON r.id = ur.role_id
-      WHERE ur.user_id = auth.uid() AND r.role_name = 'admin'
-    )
-  );
+-- User_Roles: Any logged in user can read, only admins can write
+CREATE POLICY "UserRoles: Any logged in user can read"
+  ON public.user_roles FOR SELECT USING (auth.uid() IS NOT NULL);
+
 CREATE POLICY "UserRoles: Admin insert"
   ON public.user_roles FOR INSERT WITH CHECK (
     EXISTS (
