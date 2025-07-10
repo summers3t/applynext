@@ -4,11 +4,19 @@
   import { get } from 'svelte/store';
 
   // Types
+  type Status = 'open' | 'in_progress' | 'done';
+  const statusOptions = [
+    { value: 'open', label: 'Open', color: '#1976d2' },
+    { value: 'in_progress', label: 'In Progress', color: '#f4a300' },
+    { value: 'done', label: 'Done', color: '#43a047' }
+  ];
+
   type Subtask = {
     id: string;
     task_id: string;
     owner_id: string;
     content: string;
+    status: Status;
     created_at: string;
     updated_at: string;
   };
@@ -17,6 +25,7 @@
     owner_id: string;
     title: string;
     description: string;
+    status: Status;
     created_at: string;
     updated_at: string;
     subtasks?: Subtask[];
@@ -29,20 +38,24 @@
 
   let newTitle = '';
   let newDescription = '';
+  let newStatus: Status = 'open';
   let creating = false;
 
   // Inline edit for tasks and subtasks
   let editingTaskId: string | null = null;
   let editTitle = '';
   let editDescription = '';
+  let editTaskStatus: Status = 'open';
   let savingTask = false;
 
   let editingSubtaskId: string | null = null;
   let editSubtaskContent = '';
+  let editSubtaskStatus: Status = 'open';
   let savingSubtask = false;
 
   // Add subtask state
   let newSubtaskContent: { [taskId: string]: string } = {};
+  let newSubtaskStatus: { [taskId: string]: Status } = {};
 
   // Expanded/collapsed state
   let expanded: Set<string> = new Set();
@@ -110,6 +123,7 @@
       .insert([{
         title: newTitle.trim(),
         description: newDescription.trim(),
+        status: newStatus,
         owner_id: $session.user.id,
       }])
       .select();
@@ -120,6 +134,7 @@
       tasks = [data[0], ...tasks];
       newTitle = '';
       newDescription = '';
+      newStatus = 'open';
     }
     creating = false;
   }
@@ -127,7 +142,6 @@
   function toggleExpand(taskId: string) {
     if (expanded.has(taskId)) {
       expanded.delete(taskId);
-      // Clear selection if collapsed
       if (selected && selected.type === 'subtask' && selected.parentTaskId === taskId) {
         selected = null;
       }
@@ -159,12 +173,14 @@
       editingTaskId = task.id;
       editTitle = task.title;
       editDescription = task.description || '';
+      editTaskStatus = task.status;
     } else if (selected.type === 'subtask') {
       const task = tasks.find(t => t.id === selected?.parentTaskId);
       const subtask = task?.subtasks?.find(st => st.id === selected?.id);
       if (!subtask) return;
       editingSubtaskId = subtask.id;
       editSubtaskContent = subtask.content;
+      editSubtaskStatus = subtask.status;
     }
   }
 
@@ -215,7 +231,8 @@
       .from('tasks')
       .update({
         title: editTitle.trim(),
-        description: editDescription.trim()
+        description: editDescription.trim(),
+        status: editTaskStatus
       })
       .eq('id', id)
       .eq('owner_id', $session.user.id)
@@ -232,15 +249,30 @@
     selected = null;
   }
 
+  async function updateTaskStatus(id: string, newStatus: Status) {
+    if (!$session) return;
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ status: newStatus })
+      .eq('id', id)
+      .eq('owner_id', $session.user.id)
+      .select();
+    if (!error && data && data.length) {
+      tasks = tasks.map(t => t.id === id ? { ...t, status: newStatus } : t);
+    }
+  }
+
   // Subtask CRUD
   async function addSubtask(taskId: string) {
+    const status = newSubtaskStatus[taskId] || 'open';
     if (!newSubtaskContent[taskId]?.trim() || !$session) return;
     const { data, error } = await supabase
       .from('subtasks')
       .insert([{
         task_id: taskId,
         owner_id: $session.user.id,
-        content: newSubtaskContent[taskId].trim()
+        content: newSubtaskContent[taskId].trim(),
+        status
       }])
       .select();
     if (error) {
@@ -249,6 +281,7 @@
     }
     if (data && data.length) {
       newSubtaskContent[taskId] = '';
+      newSubtaskStatus[taskId] = 'open';
       await refreshTaskSubtasks(taskId);
     }
   }
@@ -264,7 +297,7 @@
     savingSubtask = true;
     const { data, error } = await supabase
       .from('subtasks')
-      .update({ content: editSubtaskContent.trim() })
+      .update({ content: editSubtaskContent.trim(), status: editSubtaskStatus })
       .eq('id', subtask.id)
       .eq('owner_id', $session.user.id)
       .select();
@@ -279,6 +312,23 @@
     selected = null;
   }
 
+  async function updateSubtaskStatus(subtask: Subtask, newStatus: Status) {
+    if (!$session) return;
+    const { data, error } = await supabase
+      .from('subtasks')
+      .update({ status: newStatus })
+      .eq('id', subtask.id)
+      .eq('owner_id', $session.user.id)
+      .select();
+    if (!error && data && data.length) {
+      const task = tasks.find(t => t.id === subtask.task_id);
+      if (task) {
+        task.subtasks = task.subtasks?.map(st => st.id === subtask.id ? { ...st, status: newStatus } : st);
+        tasks = tasks.map(t => t.id === subtask.task_id ? { ...task } : t);
+      }
+    }
+  }
+
   async function deleteSubtask(subtask: Subtask) {
     if (!$session) return;
     const { error } = await supabase
@@ -290,11 +340,24 @@
       alert('Error deleting subtask: ' + error.message);
     } else {
       await refreshTaskSubtasks(subtask.task_id);
+      // Collapse if no more subtasks
+      const parentTask = tasks.find(t => t.id === subtask.task_id);
+      if (parentTask && (!parentTask.subtasks || parentTask.subtasks.length === 0)) {
+        expanded.delete(subtask.task_id);
+        expanded = new Set(expanded);
+      }
     }
     selected = null;
   }
 
+
   $: $session, fetchTasks();
+
+  // Helper for badge style
+  function statusStyle(status: Status): string {
+    const opt = statusOptions.find(o => o.value === status);
+    return `background:${opt?.color ?? '#aaa'}; color:#fff; font-weight:600; font-size:0.92em; border-radius:0.6em; padding:0.18em 0.65em; margin-right:0.3em;`;
+  }
 </script>
 
 <style>
@@ -312,9 +375,6 @@
   .task-table th {
     background: #f8f8f8;
     font-weight: 600;
-  }
-  .task-table td button {
-    margin-right: 0.5em;
   }
   .task-table td input[type="text"] {
     width: 96%;
@@ -355,6 +415,10 @@
     font-size: 1em;
     margin-right: 0.4em;
   }
+  .done {
+    text-decoration: line-through;
+    opacity: 0.7;
+  }
 </style>
 
 <h1>Welcome to ApplyNext</h1>
@@ -377,6 +441,11 @@
       bind:value={newDescription}
       style="margin-right:0.5em;"
     />
+    <select bind:value={newStatus} style="margin-right:0.5em;">
+      {#each statusOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
     <button type="submit" disabled={creating || !newTitle.trim()}>
       {creating ? 'Adding…' : 'Add Task'}
     </button>
@@ -424,20 +493,17 @@
             {#if editingTaskId === task.id}
               <td>
                 <button class="expand-btn" disabled>➖</button>
-                <input
-                  type="text"
-                  bind:value={editTitle}
-                  required
-                />
+                <input type="text" bind:value={editTitle} required />
               </td>
               <td>
-                <input
-                  type="text"
-                  bind:value={editDescription}
-                  placeholder="Description (optional)"
-                />
+                <input type="text" bind:value={editDescription} placeholder="Description (optional)" />
               </td>
               <td>
+                <select bind:value={editTaskStatus} style="margin-right:0.5em;">
+                  {#each statusOptions as opt}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                </select>
                 <button on:click={() => saveEditTask(task.id)} disabled={savingTask || !editTitle.trim()}>
                   {savingTask ? 'Saving…' : 'Save'}
                 </button>
@@ -454,10 +520,23 @@
                     Add subtask
                   </button>
                 {/if}
-                <strong>{task.title}</strong>
+                <span class:done={task.status === 'done'}>
+                  <span style={statusStyle(task.status)}>{statusOptions.find(o => o.value === task.status)?.label}</span>
+                  <strong>{task.title}</strong>
+                </span>
               </td>
-              <td>{task.description}</td>
-              <td></td>
+              <td>
+                <span class:done={task.status === 'done'}>
+                  {task.description}
+                </span>
+              </td>
+              <td>
+                <select bind:value={task.status} on:change={(e) => updateTaskStatus(task.id, e.target.value)} style="margin-right:0.7em;">
+                  {#each statusOptions as opt}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                </select>
+              </td>
             {/if}
           </tr>
           {#if expanded.has(task.id)}
@@ -479,14 +558,27 @@
                             type="text"
                             bind:value={editSubtaskContent}
                             required
-                            style="margin-right:0.5em; width:55%;"
+                            style="margin-right:0.5em; width:44%;"
                           />
+                          <select bind:value={editSubtaskStatus} style="margin-right:0.5em;">
+                            {#each statusOptions as opt}
+                              <option value={opt.value}>{opt.label}</option>
+                            {/each}
+                          </select>
                           <span>
                             <button type="button" on:click={() => saveEditSubtask(subtask)} disabled={savingSubtask || !editSubtaskContent.trim()}>Save</button>
                             <button type="button" on:click={cancelEditSubtask} disabled={savingSubtask}>Cancel</button>
                           </span>
                         {:else}
-                          <span>{subtask.content}</span>
+                          <span class:done={subtask.status === 'done'}>
+                            <span style={statusStyle(subtask.status)}>{statusOptions.find(o => o.value === subtask.status)?.label}</span>
+                            {subtask.content}
+                          </span>
+                          <select bind:value={subtask.status} on:change={(e) => updateSubtaskStatus(subtask, e.target.value)} style="margin-left:1em;">
+                            {#each statusOptions as opt}
+                              <option value={opt.value}>{opt.label}</option>
+                            {/each}
+                          </select>
                         {/if}
                       </li>
                     {/each}
@@ -497,8 +589,13 @@
                         type="text"
                         placeholder="Add subtask…"
                         bind:value={newSubtaskContent[task.id]}
-                        style="margin-right:0.5em; width:55%;"
+                        style="margin-right:0.5em; width:44%;"
                       />
+                      <select bind:value={newSubtaskStatus[task.id]} style="margin-right:0.5em;">
+                        {#each statusOptions as opt}
+                          <option value={opt.value}>{opt.label}</option>
+                        {/each}
+                      </select>
                       <button type="submit" disabled={!newSubtaskContent[task.id]?.trim()}>Add</button>
                     </form>
                   {/if}
