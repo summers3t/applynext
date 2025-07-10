@@ -3,7 +3,6 @@
   import { session } from '$lib/session';
   import { get } from 'svelte/store';
 
-  // Types
   type Status = 'open' | 'in_progress' | 'done';
   const statusOptions = [
     { value: 'open', label: 'Open', color: '#1976d2' },
@@ -17,6 +16,7 @@
     owner_id: string;
     content: string;
     status: Status;
+    due_date: string | null;
     created_at: string;
     updated_at: string;
   };
@@ -26,6 +26,7 @@
     title: string;
     description: string;
     status: Status;
+    due_date: string | null;
     created_at: string;
     updated_at: string;
     subtasks?: Subtask[];
@@ -39,6 +40,7 @@
   let newTitle = '';
   let newDescription = '';
   let newStatus: Status = 'open';
+  let newDueDate: string | null = null;
   let creating = false;
 
   // Inline edit for tasks and subtasks
@@ -46,16 +48,19 @@
   let editTitle = '';
   let editDescription = '';
   let editTaskStatus: Status = 'open';
+  let editTaskDueDate: string | null = null;
   let savingTask = false;
 
   let editingSubtaskId: string | null = null;
   let editSubtaskContent = '';
   let editSubtaskStatus: Status = 'open';
+  let editSubtaskDueDate: string | null = null;
   let savingSubtask = false;
 
   // Add subtask state
   let newSubtaskContent: { [taskId: string]: string } = {};
   let newSubtaskStatus: { [taskId: string]: Status } = {};
+  let newSubtaskDueDate: { [taskId: string]: string | null } = {};
 
   // Expanded/collapsed state
   let expanded: Set<string> = new Set();
@@ -124,6 +129,7 @@
         title: newTitle.trim(),
         description: newDescription.trim(),
         status: newStatus,
+        due_date: newDueDate,
         owner_id: $session.user.id,
       }])
       .select();
@@ -135,6 +141,7 @@
       newTitle = '';
       newDescription = '';
       newStatus = 'open';
+      newDueDate = null;
     }
     creating = false;
   }
@@ -174,6 +181,7 @@
       editTitle = task.title;
       editDescription = task.description || '';
       editTaskStatus = task.status;
+      editTaskDueDate = task.due_date;
     } else if (selected.type === 'subtask') {
       const task = tasks.find(t => t.id === selected?.parentTaskId);
       const subtask = task?.subtasks?.find(st => st.id === selected?.id);
@@ -181,6 +189,7 @@
       editingSubtaskId = subtask.id;
       editSubtaskContent = subtask.content;
       editSubtaskStatus = subtask.status;
+      editSubtaskDueDate = subtask.due_date;
     }
   }
 
@@ -221,6 +230,7 @@
     editingTaskId = null;
     editTitle = '';
     editDescription = '';
+    editTaskDueDate = null;
     selected = null;
   }
 
@@ -232,7 +242,8 @@
       .update({
         title: editTitle.trim(),
         description: editDescription.trim(),
-        status: editTaskStatus
+        status: editTaskStatus,
+        due_date: editTaskDueDate
       })
       .eq('id', id)
       .eq('owner_id', $session.user.id)
@@ -246,6 +257,7 @@
     savingTask = false;
     editTitle = '';
     editDescription = '';
+    editTaskDueDate = null;
     selected = null;
   }
 
@@ -265,6 +277,7 @@
   // Subtask CRUD
   async function addSubtask(taskId: string) {
     const status = newSubtaskStatus[taskId] || 'open';
+    const due_date = newSubtaskDueDate[taskId] || null;
     if (!newSubtaskContent[taskId]?.trim() || !$session) return;
     const { data, error } = await supabase
       .from('subtasks')
@@ -272,7 +285,8 @@
         task_id: taskId,
         owner_id: $session.user.id,
         content: newSubtaskContent[taskId].trim(),
-        status
+        status,
+        due_date
       }])
       .select();
     if (error) {
@@ -282,6 +296,7 @@
     if (data && data.length) {
       newSubtaskContent[taskId] = '';
       newSubtaskStatus[taskId] = 'open';
+      newSubtaskDueDate[taskId] = null;
       await refreshTaskSubtasks(taskId);
     }
   }
@@ -289,6 +304,7 @@
   function cancelEditSubtask() {
     editingSubtaskId = null;
     editSubtaskContent = '';
+    editSubtaskDueDate = null;
     selected = null;
   }
 
@@ -297,7 +313,7 @@
     savingSubtask = true;
     const { data, error } = await supabase
       .from('subtasks')
-      .update({ content: editSubtaskContent.trim(), status: editSubtaskStatus })
+      .update({ content: editSubtaskContent.trim(), status: editSubtaskStatus, due_date: editSubtaskDueDate })
       .eq('id', subtask.id)
       .eq('owner_id', $session.user.id)
       .select();
@@ -308,6 +324,7 @@
     }
     editingSubtaskId = null;
     editSubtaskContent = '';
+    editSubtaskDueDate = null;
     savingSubtask = false;
     selected = null;
   }
@@ -350,7 +367,6 @@
     selected = null;
   }
 
-
   $: $session, fetchTasks();
 
   // Helper for badge style
@@ -358,6 +374,17 @@
     const opt = statusOptions.find(o => o.value === status);
     return `background:${opt?.color ?? '#aaa'}; color:#fff; font-weight:600; font-size:0.92em; border-radius:0.6em; padding:0.18em 0.65em; margin-right:0.3em;`;
   }
+
+  // Helper to format dates as dd.mm.yyyy
+  function formatDate(dateStr: string | null | undefined): string {
+    if (!dateStr) return '';
+    // Ensure we only use yyyy-mm-dd part, even if there is time
+    const parts = dateStr.slice(0, 10).split('-');
+    if (parts.length !== 3) return dateStr;
+    // parts[2]=day, [1]=month, [0]=year
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  }
+
 </script>
 
 <style>
@@ -376,7 +403,7 @@
     background: #f8f8f8;
     font-weight: 600;
   }
-  .task-table td input[type="text"] {
+  .task-table td input[type="text"], .task-table td input[type="date"] {
     width: 96%;
     padding: 0.25em 0.5em;
     margin: 0;
@@ -419,6 +446,16 @@
     text-decoration: line-through;
     opacity: 0.7;
   }
+  .date-badge {
+    background: #e3e3f9;
+    color: #4250a3;
+    border-radius: 1em;
+    padding: 0.17em 0.7em;
+    font-size: 0.89em;
+    font-weight: 500;
+    margin-left: 0.6em;
+    margin-right: 0.15em;
+  }
 </style>
 
 <h1>Welcome to ApplyNext</h1>
@@ -446,6 +483,10 @@
         <option value={opt.value}>{opt.label}</option>
       {/each}
     </select>
+    <input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
+    {#if newDueDate}
+      <button type="button" on:click={() => (newDueDate = null)} style="margin-right:0.3em;">❌</button>
+    {/if}
     <button type="submit" disabled={creating || !newTitle.trim()}>
       {creating ? 'Adding…' : 'Add Task'}
     </button>
@@ -494,6 +535,10 @@
               <td>
                 <button class="expand-btn" disabled>➖</button>
                 <input type="text" bind:value={editTitle} required />
+                <input type="date" bind:value={editTaskDueDate} style="margin-left:0.4em; width:40%;" />
+                {#if editTaskDueDate}
+                  <button type="button" on:click={() => (editTaskDueDate = null)} style="margin-left:0.2em;">❌</button>
+                {/if}
               </td>
               <td>
                 <input type="text" bind:value={editDescription} placeholder="Description (optional)" />
@@ -523,6 +568,9 @@
                 <span class:done={task.status === 'done'}>
                   <span style={statusStyle(task.status)}>{statusOptions.find(o => o.value === task.status)?.label}</span>
                   <strong>{task.title}</strong>
+                  {#if task.due_date}
+                    <span class="date-badge">{formatDate(task.due_date)}</span>
+                  {/if}
                 </span>
               </td>
               <td>
@@ -558,13 +606,17 @@
                             type="text"
                             bind:value={editSubtaskContent}
                             required
-                            style="margin-right:0.5em; width:44%;"
+                            style="margin-right:0.5em; width:36%;"
                           />
                           <select bind:value={editSubtaskStatus} style="margin-right:0.5em;">
                             {#each statusOptions as opt}
                               <option value={opt.value}>{opt.label}</option>
                             {/each}
                           </select>
+                          <input type="date" bind:value={editSubtaskDueDate} style="margin-right:0.5em; width:30%;" />
+                          {#if editSubtaskDueDate}
+                            <button type="button" on:click={() => (editSubtaskDueDate = null)} style="margin-right:0.3em;">❌</button>
+                          {/if}
                           <span>
                             <button type="button" on:click={() => saveEditSubtask(subtask)} disabled={savingSubtask || !editSubtaskContent.trim()}>Save</button>
                             <button type="button" on:click={cancelEditSubtask} disabled={savingSubtask}>Cancel</button>
@@ -573,6 +625,9 @@
                           <span class:done={subtask.status === 'done'}>
                             <span style={statusStyle(subtask.status)}>{statusOptions.find(o => o.value === subtask.status)?.label}</span>
                             {subtask.content}
+                            {#if subtask.due_date}
+                              <span class="date-badge">{formatDate(subtask.due_date)}</span>
+                            {/if}
                           </span>
                           <select bind:value={subtask.status} on:change={(e) => updateSubtaskStatus(subtask, e.target.value)} style="margin-left:1em;">
                             {#each statusOptions as opt}
@@ -589,13 +644,17 @@
                         type="text"
                         placeholder="Add subtask…"
                         bind:value={newSubtaskContent[task.id]}
-                        style="margin-right:0.5em; width:44%;"
+                        style="margin-right:0.5em; width:36%;"
                       />
                       <select bind:value={newSubtaskStatus[task.id]} style="margin-right:0.5em;">
                         {#each statusOptions as opt}
                           <option value={opt.value}>{opt.label}</option>
                         {/each}
                       </select>
+                      <input type="date" bind:value={newSubtaskDueDate[task.id]} style="margin-right:0.5em; width:28%;" />
+                      {#if newSubtaskDueDate[task.id]}
+                        <button type="button" on:click={() => (newSubtaskDueDate[task.id] = null)} style="margin-right:0.3em;">❌</button>
+                      {/if}
                       <button type="submit" disabled={!newSubtaskContent[task.id]?.trim()}>Add</button>
                     </form>
                   {/if}
