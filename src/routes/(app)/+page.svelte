@@ -4,11 +4,12 @@
   import { get } from 'svelte/store';
 
   type Status = 'open' | 'in_progress' | 'done';
-  const statusOptions = [
-    { value: 'open', label: 'Open', color: '#1976d2' },
-    { value: 'in_progress', label: 'In Progress', color: '#f4a300' },
-    { value: 'done', label: 'Done', color: '#43a047' }
-  ];
+  const statusColors: Record<Status, string> = {
+    open: '#fff',
+    in_progress: '#1976d2',
+    done: '#43a047'
+  };
+  const overdueColor = '#e74c3c';
 
   type Subtask = {
     id: string;
@@ -17,9 +18,11 @@
     content: string;
     status: Status;
     due_date: string | null;
+    sort_index: number;
     created_at: string;
     updated_at: string;
   };
+
   type Task = {
     id: string;
     owner_id: string;
@@ -27,12 +30,12 @@
     description: string;
     status: Status;
     due_date: string | null;
+    sort_index: number;
     created_at: string;
     updated_at: string;
-    subtasks?: Subtask[];
+    subtasks: Subtask[];
   };
 
-  // State
   let tasks: Task[] = [];
   let loading = false;
   let error = '';
@@ -42,51 +45,59 @@
   let newStatus: Status = 'open';
   let newDueDate: string | null = null;
   let creating = false;
+  let insertingAtIndex: number | null = null;
 
-  // Inline edit for tasks and subtasks
+  let selected: { type: 'task' | 'subtask'; id: string; parentTaskId?: string } | null = null;
+
+  // Edit state
   let editingTaskId: string | null = null;
   let editTitle = '';
   let editDescription = '';
-  let editTaskStatus: Status = 'open';
-  let editTaskDueDate: string | null = null;
-  let savingTask = false;
+  let editStatus: Status = 'open';
+  let editDueDate: string | null = null;
+  let savingEdit = false;
 
+  // Subtask add/insert
+  let insertingSubtaskAt: { taskId: string; index: number } | null = null;
+  let newSubtaskContent = '';
+  let newSubtaskStatus: Status = 'open';
+  let newSubtaskDueDate: string | null = null;
+  let creatingSubtask = false;
+
+  // Subtask edit
   let editingSubtaskId: string | null = null;
   let editSubtaskContent = '';
   let editSubtaskStatus: Status = 'open';
   let editSubtaskDueDate: string | null = null;
-  let savingSubtask = false;
+  let savingSubtaskEdit = false;
 
-  // Add subtask state
-  let newSubtaskContent: { [taskId: string]: string } = {};
-  let newSubtaskStatus: { [taskId: string]: Status } = {};
-  let newSubtaskDueDate: { [taskId: string]: string | null } = {};
-
-  // Expanded/collapsed state
-  let expanded: Set<string> = new Set();
-
-  // Selection state
-  let selected: { type: 'task' | 'subtask'; id: string; parentTaskId?: string } | null = null;
+  // Expanded/collapsed state for tasks with subtasks
+  let expandedTasks: Set<string> = new Set();
 
   $: $session = get(session);
 
-  async function fetchSubtasksForTask(taskId: string): Promise<Subtask[]> {
-    const { data, error } = await supabase
-      .from('subtasks')
-      .select('*')
-      .eq('task_id', taskId)
-      .order('created_at', { ascending: true });
-    if (error) return [];
-    return data ?? [];
+  // ---- Helper functions ----
+
+  function formatDate(dateStr: string | null | undefined): string {
+    if (!dateStr) return '';
+    const parts = dateStr.slice(0, 10).split('-');
+    if (parts.length !== 3) return dateStr;
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
   }
 
-  async function refreshTaskSubtasks(taskId: string) {
-    const task = tasks.find(t => t.id === taskId);
-    if (task) {
-      task.subtasks = await fetchSubtasksForTask(taskId);
-      tasks = tasks.map(t => t.id === taskId ? { ...t, subtasks: task.subtasks } : t);
-    }
+  function isOverdue(due_date: string | null, status: Status): boolean {
+    if (!due_date || status === 'done') return false;
+    const today = new Date();
+    const d = new Date(due_date);
+    return d < new Date(today.getFullYear(), today.getMonth(), today.getDate());
   }
+
+  function statusDotColor(status: Status, overdue: boolean): string {
+    if (overdue) return overdueColor;
+    return statusColors[status];
+  }
+
+  // ---- SvelteKit logic ----
 
   async function fetchTasks() {
     loading = true;
@@ -98,9 +109,9 @@
     }
     const { data, error: err } = await supabase
       .from('tasks')
-      .select('*')
+      .select('*, subtasks(*)')
       .eq('owner_id', $session.user.id)
-      .order('created_at', { ascending: false });
+      .order('sort_index', { ascending: true });
 
     if (err) {
       error = err.message;
@@ -108,283 +119,344 @@
       loading = false;
       return;
     }
-    const tasksWithSubtasks = await Promise.all(
-      (data ?? []).map(async (task: Task) => {
-        const subtasks = await fetchSubtasksForTask(task.id);
-        return { ...task, subtasks };
-      })
-    );
-    tasks = tasksWithSubtasks;
+    tasks = (data ?? []).map(t => {
+      const subtasks = Array.isArray(t.subtasks)
+        ? t.subtasks.map(st => ({ ...st, sort_index: st.sort_index ?? 0 }))
+        : [];
+      return {
+        ...t,
+        subtasks: subtasks.sort((a, b) => a.sort_index - b.sort_index)
+      };
+    });
     loading = false;
-    expanded = new Set();
     selected = null;
+    insertingAtIndex = null;
+    editingTaskId = null;
+    insertingSubtaskAt = null;
+    editingSubtaskId = null;
+
+    // Keep expanded state for still-present tasks
+    expandedTasks = new Set(
+      [...expandedTasks].filter(id => tasks.some(t => t.id === id && t.subtasks.length > 0))
+    );
   }
 
-  async function createTask() {
+  // ---- Reindex helpers ----
+  async function reindexTasks(newOrder: Task[]) {
+    await Promise.all(
+      newOrder.map((task, idx) =>
+        supabase
+          .from('tasks')
+          .update({ sort_index: idx })
+          .eq('id', task.id)
+      )
+    );
+    await fetchTasks();
+  }
+
+  async function reindexSubtasks(taskId: string, newOrder: Subtask[]) {
+    await Promise.all(
+      newOrder.map((st, idx) =>
+        supabase
+          .from('subtasks')
+          .update({ sort_index: idx })
+          .eq('id', st.id)
+      )
+    );
+    await fetchTasks();
+  }
+
+  // ---- Task CRUD ----
+
+  async function createTask(atIndex: number | null = null) {
     if (!newTitle.trim() || !$session) return;
     creating = true;
-    const { data, error: err } = await supabase
-      .from('tasks')
-      .insert([{
-        title: newTitle.trim(),
-        description: newDescription.trim(),
-        status: newStatus,
-        due_date: newDueDate,
-        owner_id: $session.user.id,
-      }])
-      .select();
-    if (err) {
-      alert('Error creating task: ' + err.message);
-    } else if (data && data.length) {
-      data[0].subtasks = [];
-      tasks = [data[0], ...tasks];
-      newTitle = '';
-      newDescription = '';
-      newStatus = 'open';
-      newDueDate = null;
-    }
-    creating = false;
-  }
-
-  function toggleExpand(taskId: string) {
-    if (expanded.has(taskId)) {
-      expanded.delete(taskId);
-      if (selected && selected.type === 'subtask' && selected.parentTaskId === taskId) {
-        selected = null;
+    let sort_index = tasks.length;
+    if (atIndex !== null) {
+      sort_index = atIndex + 1;
+      const before = tasks.slice(0, sort_index);
+      const after = tasks.slice(sort_index);
+      const { data, error: err } = await supabase
+        .from('tasks')
+        .insert([{
+          title: newTitle.trim(),
+          description: newDescription.trim(),
+          status: newStatus,
+          due_date: newDueDate,
+          owner_id: $session.user.id,
+          sort_index
+        }])
+        .select('*, subtasks(*)');
+      creating = false;
+      if (err || !data || !data[0]) {
+        alert('Error creating task: ' + (err?.message ?? 'unknown'));
+        await fetchTasks();
+        return;
       }
+      const inserted = data[0];
+      const newTasks = [...before, inserted, ...after];
+      await reindexTasks(newTasks);
     } else {
-      expanded.add(taskId);
+      const { data, error: err } = await supabase
+        .from('tasks')
+        .insert([{
+          title: newTitle.trim(),
+          description: newDescription.trim(),
+          status: newStatus,
+          due_date: newDueDate,
+          owner_id: $session.user.id,
+          sort_index
+        }])
+        .select('*, subtasks(*)');
+      creating = false;
+      if (err || !data || !data[0]) {
+        alert('Error creating task: ' + (err?.message ?? 'unknown'));
+        await fetchTasks();
+        return;
+      }
+      await fetchTasks();
     }
-    expanded = new Set(expanded);
+    newTitle = '';
+    newDescription = '';
+    newStatus = 'open';
+    newDueDate = null;
+    insertingAtIndex = null;
   }
 
-  function expandAndAddSubtask(taskId: string) {
-    expanded.add(taskId);
-    expanded = new Set(expanded);
+  function showInsertFormAt(idx: number) {
+    insertingAtIndex = idx;
+    newTitle = '';
+    newDescription = '';
+    newStatus = 'open';
+    newDueDate = null;
+    editingTaskId = null;
+    editingSubtaskId = null;
+    insertingSubtaskAt = null;
+  }
+
+  async function moveSelectedTask(offset: number) {
+    if (!selected || selected.type !== 'task') return;
+    const idx = tasks.findIndex(t => t.id === selected?.id);
+    if (idx === -1) return;
+    const swapWith = idx + offset;
+    if (swapWith < 0 || swapWith >= tasks.length) return;
+    const newOrder = [...tasks];
+    const [moved] = newOrder.splice(idx, 1);
+    newOrder.splice(swapWith, 0, moved);
+    await reindexTasks(newOrder);
+    selected = { type: 'task', id: moved.id };
+  }
+
+  async function deleteSelected() {
+    if (!selected) return;
+    if (selected.type === 'task') {
+      await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', selected.id)
+        .eq('owner_id', $session.user.id);
+      const newTasks = tasks.filter(t => t.id !== selected.id);
+      await reindexTasks(newTasks);
+      selected = null;
+    } else if (selected.type === 'subtask' && selected.parentTaskId) {
+      const task = tasks.find(t => t.id === selected.parentTaskId);
+      if (!task) return;
+      await supabase
+        .from('subtasks')
+        .delete()
+        .eq('id', selected.id)
+        .eq('owner_id', $session.user.id);
+      const newSubtasks = task.subtasks.filter(st => st.id !== selected.id);
+      await reindexSubtasks(task.id, newSubtasks);
+      selected = null;
+    }
   }
 
   function selectTask(taskId: string) {
     selected = { type: 'task', id: taskId };
+    insertingAtIndex = null;
+    editingTaskId = null;
+    insertingSubtaskAt = null;
+    editingSubtaskId = null;
+  }
+  function selectSubtask(subtaskId: string, taskId: string) {
+    selected = { type: 'subtask', id: subtaskId, parentTaskId: taskId };
+    insertingAtIndex = null;
+    editingTaskId = null;
+    insertingSubtaskAt = null;
+    editingSubtaskId = null;
   }
 
-  function selectSubtask(subtaskId: string, parentTaskId: string) {
-    selected = { type: 'subtask', id: subtaskId, parentTaskId };
-  }
-
-  // Toolbar actions
-  function startEditSelection() {
+  // ---- Inline Edit ----
+  function startEdit() {
     if (!selected) return;
     if (selected.type === 'task') {
       const task = tasks.find(t => t.id === selected?.id);
       if (!task) return;
       editingTaskId = task.id;
       editTitle = task.title;
-      editDescription = task.description || '';
-      editTaskStatus = task.status;
-      editTaskDueDate = task.due_date;
-    } else if (selected.type === 'subtask') {
-      const task = tasks.find(t => t.id === selected?.parentTaskId);
-      const subtask = task?.subtasks?.find(st => st.id === selected?.id);
+      editDescription = task.description ?? '';
+      editStatus = task.status;
+      editDueDate = task.due_date;
+      insertingAtIndex = null;
+      insertingSubtaskAt = null;
+      editingSubtaskId = null;
+    } else if (selected.type === 'subtask' && selected.parentTaskId) {
+      const task = tasks.find(t => t.id === selected.parentTaskId);
+      const subtask = task?.subtasks.find(st => st.id === selected.id);
       if (!subtask) return;
       editingSubtaskId = subtask.id;
       editSubtaskContent = subtask.content;
       editSubtaskStatus = subtask.status;
       editSubtaskDueDate = subtask.due_date;
+      insertingAtIndex = null;
+      insertingSubtaskAt = null;
+      editingTaskId = null;
     }
   }
-
-  async function deleteSelection() {
-    if (!selected) return;
-    if (selected.type === 'task') {
-      await deleteTask(selected.id);
-    } else if (selected.type === 'subtask' && selected.parentTaskId) {
-      const subtask = tasks
-        .find(t => t.id === selected.parentTaskId)
-        ?.subtasks?.find(st => st.id === selected.id);
-      if (subtask) {
-        await deleteSubtask(subtask);
-      }
-    }
-    selected = null;
-  }
-
-  async function deleteTask(id: string) {
-    if (!$session) return;
-    const { error: err } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', id)
-      .eq('owner_id', $session.user.id);
-    if (err) {
-      alert('Error deleting task: ' + err.message);
-    } else {
-      tasks = tasks.filter(t => t.id !== id);
-      expanded.delete(id);
-      expanded = new Set(expanded);
-    }
-    selected = null;
-  }
-
-  // Task editing
-  function cancelEditTask() {
+  function cancelEdit() {
     editingTaskId = null;
     editTitle = '';
     editDescription = '';
-    editTaskDueDate = null;
-    selected = null;
+    editDueDate = null;
+    editStatus = 'open';
+    editingSubtaskId = null;
+    editSubtaskContent = '';
+    editSubtaskDueDate = null;
+    editSubtaskStatus = 'open';
   }
-
-  async function saveEditTask(id: string) {
-    if (!editTitle.trim() || !$session) return;
-    savingTask = true;
-    const { data, error: err } = await supabase
+  async function saveEditTask() {
+    if (!editingTaskId || !editTitle.trim() || !$session) return;
+    savingEdit = true;
+    const { error: err } = await supabase
       .from('tasks')
       .update({
         title: editTitle.trim(),
         description: editDescription.trim(),
-        status: editTaskStatus,
-        due_date: editTaskDueDate
+        status: editStatus,
+        due_date: editDueDate
       })
-      .eq('id', id)
-      .eq('owner_id', $session.user.id)
-      .select();
+      .eq('id', editingTaskId)
+      .eq('owner_id', $session.user.id);
+    savingEdit = false;
     if (err) {
       alert('Error saving task: ' + err.message);
-    } else if (data && data.length) {
-      tasks = tasks.map(t => t.id === id ? { ...data[0], subtasks: t.subtasks } : t);
     }
+    await fetchTasks();
     editingTaskId = null;
-    savingTask = false;
-    editTitle = '';
-    editDescription = '';
-    editTaskDueDate = null;
-    selected = null;
   }
 
-  async function updateTaskStatus(id: string, newStatus: Status) {
-    if (!$session) return;
-    const { data, error } = await supabase
-      .from('tasks')
-      .update({ status: newStatus })
-      .eq('id', id)
-      .eq('owner_id', $session.user.id)
-      .select();
-    if (!error && data && data.length) {
-      tasks = tasks.map(t => t.id === id ? { ...t, status: newStatus } : t);
-    }
-  }
-
-  // Subtask CRUD
-  async function addSubtask(taskId: string) {
-    const status = newSubtaskStatus[taskId] || 'open';
-    const due_date = newSubtaskDueDate[taskId] || null;
-    if (!newSubtaskContent[taskId]?.trim() || !$session) return;
-    const { data, error } = await supabase
-      .from('subtasks')
-      .insert([{
-        task_id: taskId,
-        owner_id: $session.user.id,
-        content: newSubtaskContent[taskId].trim(),
-        status,
-        due_date
-      }])
-      .select();
-    if (error) {
-      alert('Error adding subtask: ' + error.message);
-      return;
-    }
-    if (data && data.length) {
-      newSubtaskContent[taskId] = '';
-      newSubtaskStatus[taskId] = 'open';
-      newSubtaskDueDate[taskId] = null;
-      await refreshTaskSubtasks(taskId);
-    }
-  }
-
-  function cancelEditSubtask() {
+  // ---- Subtask CRUD/ordering ----
+  function showInsertSubtaskForm(taskId: string, idx: number) {
+    insertingSubtaskAt = { taskId, index: idx };
+    newSubtaskContent = '';
+    newSubtaskStatus = 'open';
+    newSubtaskDueDate = null;
+    editingTaskId = null;
     editingSubtaskId = null;
-    editSubtaskContent = '';
-    editSubtaskDueDate = null;
-    selected = null;
+    insertingAtIndex = null;
+    // Expand the task (user intends to add a subtask)
+    expandedTasks = new Set([...expandedTasks, taskId]);
   }
-
-  async function saveEditSubtask(subtask: Subtask) {
-    if (!editSubtaskContent.trim() || !$session) return;
-    savingSubtask = true;
-    const { data, error } = await supabase
-      .from('subtasks')
-      .update({ content: editSubtaskContent.trim(), status: editSubtaskStatus, due_date: editSubtaskDueDate })
-      .eq('id', subtask.id)
-      .eq('owner_id', $session.user.id)
-      .select();
-    if (error) {
-      alert('Error saving subtask: ' + error.message);
-    } else if (data && data.length) {
-      await refreshTaskSubtasks(subtask.task_id);
-    }
-    editingSubtaskId = null;
-    editSubtaskContent = '';
-    editSubtaskDueDate = null;
-    savingSubtask = false;
-    selected = null;
-  }
-
-  async function updateSubtaskStatus(subtask: Subtask, newStatus: Status) {
-    if (!$session) return;
-    const { data, error } = await supabase
-      .from('subtasks')
-      .update({ status: newStatus })
-      .eq('id', subtask.id)
-      .eq('owner_id', $session.user.id)
-      .select();
-    if (!error && data && data.length) {
-      const task = tasks.find(t => t.id === subtask.task_id);
-      if (task) {
-        task.subtasks = task.subtasks?.map(st => st.id === subtask.id ? { ...st, status: newStatus } : st);
-        tasks = tasks.map(t => t.id === subtask.task_id ? { ...task } : t);
+  async function createSubtask(taskId: string, atIndex: number | null = null) {
+    if (!newSubtaskContent.trim() || !$session) return;
+    creatingSubtask = true;
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    let sort_index = task.subtasks.length;
+    if (atIndex !== null) {
+      sort_index = atIndex + 1;
+      const before = task.subtasks.slice(0, sort_index);
+      const after = task.subtasks.slice(sort_index);
+      const { data, error: err } = await supabase
+        .from('subtasks')
+        .insert([{
+          task_id: taskId,
+          owner_id: $session.user.id,
+          content: newSubtaskContent.trim(),
+          status: newSubtaskStatus,
+          due_date: newSubtaskDueDate,
+          sort_index
+        }])
+        .select();
+      creatingSubtask = false;
+      if (err || !data || !data[0]) {
+        alert('Error creating subtask: ' + (err?.message ?? 'unknown'));
+        await fetchTasks();
+        return;
       }
-    }
-  }
-
-  async function deleteSubtask(subtask: Subtask) {
-    if (!$session) return;
-    const { error } = await supabase
-      .from('subtasks')
-      .delete()
-      .eq('id', subtask.id)
-      .eq('owner_id', $session.user.id);
-    if (error) {
-      alert('Error deleting subtask: ' + error.message);
+      const inserted = data[0];
+      const newSubtasks = [...before, inserted, ...after];
+      await reindexSubtasks(taskId, newSubtasks);
     } else {
-      await refreshTaskSubtasks(subtask.task_id);
-      // Collapse if no more subtasks
-      const parentTask = tasks.find(t => t.id === subtask.task_id);
-      if (parentTask && (!parentTask.subtasks || parentTask.subtasks.length === 0)) {
-        expanded.delete(subtask.task_id);
-        expanded = new Set(expanded);
+      const { data, error: err } = await supabase
+        .from('subtasks')
+        .insert([{
+          task_id: taskId,
+          owner_id: $session.user.id,
+          content: newSubtaskContent.trim(),
+          status: newSubtaskStatus,
+          due_date: newSubtaskDueDate,
+          sort_index
+        }])
+        .select();
+      creatingSubtask = false;
+      if (err || !data || !data[0]) {
+        alert('Error creating subtask: ' + (err?.message ?? 'unknown'));
+        await fetchTasks();
+        return;
       }
+      await fetchTasks();
     }
-    selected = null;
+    newSubtaskContent = '';
+    newSubtaskStatus = 'open';
+    newSubtaskDueDate = null;
+    insertingSubtaskAt = null;
+  }
+  async function moveSelectedSubtask(offset: number) {
+    if (!selected || selected.type !== 'subtask' || !selected.parentTaskId) return;
+    const task = tasks.find(t => t.id === selected.parentTaskId);
+    if (!task) return;
+    const idx = task.subtasks.findIndex(st => st.id === selected.id);
+    if (idx === -1) return;
+    const swapWith = idx + offset;
+    if (swapWith < 0 || swapWith >= task.subtasks.length) return;
+    const newOrder = [...task.subtasks];
+    const [moved] = newOrder.splice(idx, 1);
+    newOrder.splice(swapWith, 0, moved);
+    await reindexSubtasks(task.id, newOrder);
+    selected = { type: 'subtask', id: moved.id, parentTaskId: task.id };
+  }
+  async function saveEditSubtask() {
+    if (!editingSubtaskId || !editSubtaskContent.trim() || !$session) return;
+    savingSubtaskEdit = true;
+    const { error: err } = await supabase
+      .from('subtasks')
+      .update({
+        content: editSubtaskContent.trim(),
+        status: editSubtaskStatus,
+        due_date: editSubtaskDueDate
+      })
+      .eq('id', editingSubtaskId)
+      .eq('owner_id', $session.user.id);
+    savingSubtaskEdit = false;
+    if (err) {
+      alert('Error saving subtask: ' + err.message);
+    }
+    await fetchTasks();
+    editingSubtaskId = null;
+  }
+
+  // ---- Expand/collapse logic ----
+  function toggleExpand(taskId: string) {
+    if (expandedTasks.has(taskId)) {
+      expandedTasks = new Set([...expandedTasks].filter(id => id !== taskId));
+    } else {
+      expandedTasks = new Set([...expandedTasks, taskId]);
+    }
   }
 
   $: $session, fetchTasks();
-
-  // Helper for badge style
-  function statusStyle(status: Status): string {
-    const opt = statusOptions.find(o => o.value === status);
-    return `background:${opt?.color ?? '#aaa'}; color:#fff; font-weight:600; font-size:0.92em; border-radius:0.6em; padding:0.18em 0.65em; margin-right:0.3em;`;
-  }
-
-  // Helper to format dates as dd.mm.yyyy
-  function formatDate(dateStr: string | null | undefined): string {
-    if (!dateStr) return '';
-    // Ensure we only use yyyy-mm-dd part, even if there is time
-    const parts = dateStr.slice(0, 10).split('-');
-    if (parts.length !== 3) return dateStr;
-    // parts[2]=day, [1]=month, [0]=year
-    return `${parts[2]}.${parts[1]}.${parts[0]}`;
-  }
-
 </script>
 
 <style>
@@ -403,58 +475,77 @@
     background: #f8f8f8;
     font-weight: 600;
   }
-  .task-table td input[type="text"], .task-table td input[type="date"] {
-    width: 96%;
-    padding: 0.25em 0.5em;
-    margin: 0;
+  .status-dot {
+    display: inline-block;
+    width: 1.1em;
+    height: 1.1em;
+    border-radius: 0.5em;
+    margin-right: 0.6em;
+    vertical-align: middle;
+    border: 2px solid #aaa;
     box-sizing: border-box;
+    background: #fff;
   }
   .selected-row {
     background: #e3f4fc !important;
     box-shadow: 0 0 3px #2196f344 inset;
   }
-  .subtask-list {
-    margin: 0.4em 0 0 0;
-    padding: 0;
-    list-style: disc inside;
-    font-size: 0.98em;
+  .subtask-row {
+    background: #f7faff;
   }
-  .subtask-list li {
-    margin-bottom: 0.25em;
+  .subtask-indent {
+    display: inline-block;
+    width: 2em;
   }
-  .expand-btn {
-    background: none;
-    border: none;
-    font-size: 1.1em;
-    vertical-align: middle;
-    cursor: pointer;
-    margin-right: 0.25em;
-    outline: none;
+  .action-toolbar {
+    display: flex;
+    gap: 0.5em;
+    margin-bottom: 0.8em;
+    align-items: center;
   }
-  .add-subtask-btn {
-    background: none;
-    border: 1px solid #bbb;
-    padding: 0.25em 0.75em;
-    border-radius: 1em;
-    color: #2196f3;
-    font-weight: 600;
+  .toolbar-btn {
+    padding: 0.3em 1.1em;
+    border-radius: 0.5em;
+    border: 1px solid #aaa;
+    background: #fafbfd;
     cursor: pointer;
     font-size: 1em;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  .toolbar-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .delete-btn {
+    color: #fff;
+    background: #e74c3c;
+    border: 1px solid #e74c3c;
+  }
+  .date-cell {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.97em;
+    color: #2c3566;
+    min-width: 8em;
+  }
+  .insert-form-row td, .edit-form-row td, .subtask-insert-row td, .subtask-edit-row td {
+    background: #f9fafd !important;
+    border-bottom: 1px solid #e5e5ee;
+  }
+  .expander {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.3em;
+    padding: 0 0.2em;
     margin-right: 0.4em;
+    color: #1976d2;
+    vertical-align: middle;
   }
-  .done {
-    text-decoration: line-through;
-    opacity: 0.7;
-  }
-  .date-badge {
-    background: #e3e3f9;
-    color: #4250a3;
-    border-radius: 1em;
-    padding: 0.17em 0.7em;
-    font-size: 0.89em;
-    font-weight: 500;
-    margin-left: 0.6em;
-    margin-right: 0.15em;
+  .expander:disabled {
+    color: #bbb;
+    cursor: default;
   }
 </style>
 
@@ -463,50 +554,78 @@
   <p>Logged in as {$session.user.email}</p>
   <h2>Your Tasks</h2>
 
-  <!-- Create Task Form -->
-  <form on:submit|preventDefault={createTask} style="margin-bottom:1em;">
-    <input
-      type="text"
-      placeholder="Task title"
-      bind:value={newTitle}
-      required
-      style="margin-right:0.5em;"
-    />
-    <input
-      type="text"
-      placeholder="Description (optional)"
-      bind:value={newDescription}
-      style="margin-right:0.5em;"
-    />
-    <select bind:value={newStatus} style="margin-right:0.5em;">
-      {#each statusOptions as opt}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
-    <input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
-    {#if newDueDate}
-      <button type="button" on:click={() => (newDueDate = null)} style="margin-right:0.3em;">❌</button>
-    {/if}
-    <button type="submit" disabled={creating || !newTitle.trim()}>
-      {creating ? 'Adding…' : 'Add Task'}
-    </button>
-  </form>
-
-  <!-- Toolbar for Edit/Delete -->
-  <div style="margin-bottom:0.7em;">
-    <button on:click={startEditSelection} disabled={!selected}>Edit</button>
-    <button on:click={deleteSelection} disabled={!selected}>Delete</button>
-    {#if selected}
-      <span style="color:#2196f3; margin-left:1em;">
-        Selected:
-        {selected && selected.type === 'task'
-          ? `Task: ${(tasks.find(t => t.id === selected.id)?.title) ?? ''}`
-          : selected && selected.type === 'subtask'
-            ? `Subtask: ${(tasks.find(t => t.id === selected.parentTaskId)?.subtasks?.find(st => st.id === selected.id)?.content) ?? ''}`
-            : ''
+  <!-- Toolbar -->
+  <div class="action-toolbar">
+    <button class="toolbar-btn"
+      on:click={() =>
+        selected && selected.type === 'task'
+          ? showInsertFormAt(tasks.findIndex(t => t.id === selected?.id))
+          : selected && selected.type === 'subtask' && selected.parentTaskId
+            ? showInsertSubtaskForm(selected.parentTaskId, tasks.find(t => t.id === selected.parentTaskId)?.subtasks.findIndex(st => st.id === selected.id) ?? -1)
+            : undefined
+      }
+      disabled={!selected || (selected.type === 'task' && editingTaskId !== null) || (selected.type === 'subtask' && editingSubtaskId !== null)}
+    >Insert</button>
+    <button class="toolbar-btn"
+      on:click={() => {
+        if (selected && selected.type === 'task') {
+          showInsertSubtaskForm(selected.id, tasks.find(t => t.id === selected.id)?.subtasks.length - 1 ?? -1);
         }
-      </span>
-    {/if}
+      }}
+      disabled={!selected || selected.type !== 'task' || editingTaskId !== null || editingSubtaskId !== null}
+    >Add Subtask</button>
+    <button class="toolbar-btn"
+      on:click={() =>
+        selected && selected.type === 'task'
+          ? moveSelectedTask(-1)
+          : selected && selected.type === 'subtask'
+            ? moveSelectedSubtask(-1)
+            : undefined
+      }
+      disabled={
+        !selected
+        || (selected.type === 'task' && (editingTaskId !== null || tasks.findIndex(t => t.id === selected?.id) <= 0))
+        || (selected.type === 'subtask' && (
+          editingSubtaskId !== null
+          || !selected.parentTaskId
+          || (() => {
+            const task = tasks.find(t => t.id === selected.parentTaskId);
+            if (!task) return true;
+            return task.subtasks.findIndex(st => st.id === selected.id) <= 0;
+          })()
+        ))
+      }
+    >↑</button>
+    <button class="toolbar-btn"
+      on:click={() =>
+        selected && selected.type === 'task'
+          ? moveSelectedTask(1)
+          : selected && selected.type === 'subtask'
+            ? moveSelectedSubtask(1)
+            : undefined
+      }
+      disabled={
+        !selected
+        || (selected.type === 'task' && (editingTaskId !== null || tasks.findIndex(t => t.id === selected?.id) === tasks.length - 1))
+        || (selected.type === 'subtask' && (
+          editingSubtaskId !== null
+          || !selected.parentTaskId
+          || (() => {
+            const task = tasks.find(t => t.id === selected.parentTaskId);
+            if (!task) return true;
+            return task.subtasks.findIndex(st => st.id === selected.id) === (task.subtasks.length - 1);
+          })()
+        ))
+      }
+    >↓</button>
+    <button class="toolbar-btn"
+      on:click={startEdit}
+      disabled={!selected || (selected.type === 'task' && editingTaskId !== null) || (selected.type === 'subtask' && editingSubtaskId !== null)}
+    >Edit</button>
+    <button class="toolbar-btn delete-btn"
+      on:click={deleteSelected}
+      disabled={!selected || (selected.type === 'task' && editingTaskId !== null) || (selected.type === 'subtask' && editingSubtaskId !== null)}
+    >Delete</button>
   </div>
 
   {#if loading}
@@ -519,148 +638,234 @@
     <table class="task-table">
       <thead>
         <tr>
-          <th style="width: 30%;">Task</th>
-          <th style="width: 45%;">Description</th>
-          <th style="width: 25%;">Actions</th>
+          <th style="width:3em;"></th>
+          <th style="width:2em;"></th>
+          <th style="width:40%;">Task</th>
+          <th style="width:35%;">Description / Subtask</th>
+          <th class="date-cell">Due Date</th>
         </tr>
       </thead>
       <tbody>
-        {#each tasks as task}
+        {#each tasks as task, i}
+          <!-- TASK ROW -->
           <tr
             class:selected-row={selected && selected.type === 'task' && selected.id === task.id}
-            on:click={() => selectTask(task.id)}
             style="cursor:pointer;"
+            on:click={() => selectTask(task.id)}
           >
-            {#if editingTaskId === task.id}
-              <td>
-                <button class="expand-btn" disabled>➖</button>
-                <input type="text" bind:value={editTitle} required />
-                <input type="date" bind:value={editTaskDueDate} style="margin-left:0.4em; width:40%;" />
-                {#if editTaskDueDate}
-                  <button type="button" on:click={() => (editTaskDueDate = null)} style="margin-left:0.2em;">❌</button>
-                {/if}
-              </td>
-              <td>
-                <input type="text" bind:value={editDescription} placeholder="Description (optional)" />
-              </td>
-              <td>
-                <select bind:value={editTaskStatus} style="margin-right:0.5em;">
-                  {#each statusOptions as opt}
-                    <option value={opt.value}>{opt.label}</option>
-                  {/each}
-                </select>
-                <button on:click={() => saveEditTask(task.id)} disabled={savingTask || !editTitle.trim()}>
-                  {savingTask ? 'Saving…' : 'Save'}
+            <td>
+              {#if task.subtasks.length > 0}
+                <button
+                  class="expander"
+                  on:click|stopPropagation={() => toggleExpand(task.id)}
+                  aria-label={expandedTasks.has(task.id) ? "Collapse subtasks" : "Expand subtasks"}
+                >
+                  {expandedTasks.has(task.id) ? "➖" : "➕"}
                 </button>
-                <button on:click={cancelEditTask} disabled={savingTask}>Cancel</button>
+              {/if}
+            </td>
+            <td>
+              <span
+                class="status-dot"
+                style="background:{statusDotColor(task.status, isOverdue(task.due_date, task.status))};
+                border-color:{isOverdue(task.due_date, task.status) ? overdueColor : '#aaa'};"
+                title={task.status === 'done'
+                  ? 'Done'
+                  : isOverdue(task.due_date, task.status)
+                  ? 'Overdue'
+                  : (task.status === 'open' ? 'Open' : 'In Progress')
+                }
+              ></span>
+            </td>
+            {#if editingTaskId === task.id}
+              <td colspan="3" class="edit-form-row">
+                <form on:submit|preventDefault={saveEditTask} on:click|stopPropagation style="display:flex;align-items:center;gap:0.7em;">
+                  <input
+                    type="text"
+                    bind:value={editTitle}
+                    required
+                    style="width:28%;"
+                  />
+                  <input
+                    type="text"
+                    bind:value={editDescription}
+                    placeholder="Description (optional)"
+                    style="width:38%;"
+                  />
+                  <select bind:value={editStatus}>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                  <input type="date" bind:value={editDueDate} style="width:25%;" />
+                  {#if editDueDate}
+                    <button type="button" on:click={() => (editDueDate = null)} style="margin-right:0.3em;">❌</button>
+                  {/if}
+                  <button type="submit" disabled={savingEdit || !editTitle.trim()}>Save</button>
+                  <button type="button" on:click={cancelEdit} disabled={savingEdit}>Cancel</button>
+                </form>
               </td>
             {:else}
-              <td>
-                {#if task.subtasks && task.subtasks.length > 0}
-                  <button class="expand-btn" type="button" on:click|stopPropagation={() => toggleExpand(task.id)} aria-label={expanded.has(task.id) ? 'Collapse subtasks' : 'Expand subtasks'}>
-                    {expanded.has(task.id) ? '➖' : '➕'}
-                  </button>
-                {:else}
-                  <button class="add-subtask-btn" type="button" on:click|stopPropagation={() => expandAndAddSubtask(task.id)} aria-label="Add subtask">
-                    Add subtask
-                  </button>
+              <td>{task.title}</td>
+              <td>{task.description}</td>
+              <td class="date-cell">
+                {#if task.due_date}
+                  {formatDate(task.due_date)}
                 {/if}
-                <span class:done={task.status === 'done'}>
-                  <span style={statusStyle(task.status)}>{statusOptions.find(o => o.value === task.status)?.label}</span>
-                  <strong>{task.title}</strong>
-                  {#if task.due_date}
-                    <span class="date-badge">{formatDate(task.due_date)}</span>
-                  {/if}
-                </span>
-              </td>
-              <td>
-                <span class:done={task.status === 'done'}>
-                  {task.description}
-                </span>
-              </td>
-              <td>
-                <select bind:value={task.status} on:change={(e) => updateTaskStatus(task.id, e.target.value)} style="margin-right:0.7em;">
-                  {#each statusOptions as opt}
-                    <option value={opt.value}>{opt.label}</option>
-                  {/each}
-                </select>
               </td>
             {/if}
           </tr>
-          {#if expanded.has(task.id)}
-            <tr>
-              <td colspan="3" style="padding:0;">
-                <div style="background:#fcfcfc; padding:0.5em 1em;">
-                  <div style="font-size:0.98em; font-weight:600; margin-bottom:0.3em;">
-                    Subtasks:
-                  </div>
-                  <ul class="subtask-list">
-                    {#each task.subtasks ?? [] as subtask}
-                      <li
-                        class:selected-row={selected && selected.type === 'subtask' && selected.id === subtask.id}
-                        on:click={() => selectSubtask(subtask.id, task.id)}
-                        style="cursor:pointer;"
-                      >
-                        {#if editingSubtaskId === subtask.id}
-                          <input
-                            type="text"
-                            bind:value={editSubtaskContent}
-                            required
-                            style="margin-right:0.5em; width:36%;"
-                          />
-                          <select bind:value={editSubtaskStatus} style="margin-right:0.5em;">
-                            {#each statusOptions as opt}
-                              <option value={opt.value}>{opt.label}</option>
-                            {/each}
-                          </select>
-                          <input type="date" bind:value={editSubtaskDueDate} style="margin-right:0.5em; width:30%;" />
-                          {#if editSubtaskDueDate}
-                            <button type="button" on:click={() => (editSubtaskDueDate = null)} style="margin-right:0.3em;">❌</button>
-                          {/if}
-                          <span>
-                            <button type="button" on:click={() => saveEditSubtask(subtask)} disabled={savingSubtask || !editSubtaskContent.trim()}>Save</button>
-                            <button type="button" on:click={cancelEditSubtask} disabled={savingSubtask}>Cancel</button>
-                          </span>
-                        {:else}
-                          <span class:done={subtask.status === 'done'}>
-                            <span style={statusStyle(subtask.status)}>{statusOptions.find(o => o.value === subtask.status)?.label}</span>
-                            {subtask.content}
-                            {#if subtask.due_date}
-                              <span class="date-badge">{formatDate(subtask.due_date)}</span>
-                            {/if}
-                          </span>
-                          <select bind:value={subtask.status} on:change={(e) => updateSubtaskStatus(subtask, e.target.value)} style="margin-left:1em;">
-                            {#each statusOptions as opt}
-                              <option value={opt.value}>{opt.label}</option>
-                            {/each}
-                          </select>
-                        {/if}
-                      </li>
-                    {/each}
-                  </ul>
-                  {#if $session}
-                    <form on:submit|preventDefault={() => addSubtask(task.id)} style="margin-top:0.3em;">
-                      <input
-                        type="text"
-                        placeholder="Add subtask…"
-                        bind:value={newSubtaskContent[task.id]}
-                        style="margin-right:0.5em; width:36%;"
-                      />
-                      <select bind:value={newSubtaskStatus[task.id]} style="margin-right:0.5em;">
-                        {#each statusOptions as opt}
-                          <option value={opt.value}>{opt.label}</option>
-                        {/each}
-                      </select>
-                      <input type="date" bind:value={newSubtaskDueDate[task.id]} style="margin-right:0.5em; width:28%;" />
-                      {#if newSubtaskDueDate[task.id]}
-                        <button type="button" on:click={() => (newSubtaskDueDate[task.id] = null)} style="margin-right:0.3em;">❌</button>
-                      {/if}
-                      <button type="submit" disabled={!newSubtaskContent[task.id]?.trim()}>Add</button>
-                    </form>
+
+          <!-- Insert form row (Task) -->
+          {#if insertingAtIndex === i}
+            <tr class="insert-form-row">
+              <td colspan="5">
+                <form on:submit|preventDefault={() => createTask(i)} on:click|stopPropagation>
+                  <input
+                    type="text"
+                    placeholder="Task title"
+                    bind:value={newTitle}
+                    required
+                    style="margin-right:0.5em; width:25%;"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Description (optional)"
+                    bind:value={newDescription}
+                    style="margin-right:0.5em; width:35%;"
+                  />
+                  <select bind:value={newStatus} style="margin-right:0.5em;">
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                  <input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
+                  {#if newDueDate}
+                    <button type="button" on:click={() => (newDueDate = null)} style="margin-right:0.3em;">❌</button>
                   {/if}
-                </div>
+                  <button type="submit" disabled={creating || !newTitle.trim()}>
+                    {creating ? 'Adding…' : 'Insert Task'}
+                  </button>
+                  <button type="button" on:click={() => (insertingAtIndex = null)}>Cancel</button>
+                </form>
               </td>
             </tr>
+          {/if}
+
+          <!-- SUBTASK ROWS (only if expanded) -->
+          {#if expandedTasks.has(task.id)}
+            {#each task.subtasks as subtask, stIdx}
+              <tr
+                class:selected-row={selected && selected.type === 'subtask' && selected.id === subtask.id}
+                class="subtask-row"
+                style="cursor:pointer;"
+                on:click={() => selectSubtask(subtask.id, task.id)}
+              >
+                <td><span class="subtask-indent"></span></td>
+                <td>
+                  <span
+                    class="status-dot"
+                    style="background:{statusDotColor(subtask.status, isOverdue(subtask.due_date, subtask.status))};
+                    border-color:{isOverdue(subtask.due_date, subtask.status) ? overdueColor : '#aaa'};"
+                    title={subtask.status === 'done'
+                      ? 'Done'
+                      : isOverdue(subtask.due_date, subtask.status)
+                      ? 'Overdue'
+                      : (subtask.status === 'open' ? 'Open' : 'In Progress')
+                    }
+                  ></span>
+                </td>
+                {#if editingSubtaskId === subtask.id}
+                  <td colspan="3" class="subtask-edit-row">
+                    <form on:submit|preventDefault={saveEditSubtask} on:click|stopPropagation style="display:flex;align-items:center;gap:0.7em;">
+                      <input
+                        type="text"
+                        bind:value={editSubtaskContent}
+                        required
+                        style="width:38%;"
+                      />
+                      <select bind:value={editSubtaskStatus}>
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="done">Done</option>
+                      </select>
+                      <input type="date" bind:value={editSubtaskDueDate} style="width:25%;" />
+                      {#if editSubtaskDueDate}
+                        <button type="button" on:click={() => (editSubtaskDueDate = null)} style="margin-right:0.3em;">❌</button>
+                      {/if}
+                      <button type="submit" disabled={savingSubtaskEdit || !editSubtaskContent.trim()}>Save</button>
+                      <button type="button" on:click={cancelEdit} disabled={savingSubtaskEdit}>Cancel</button>
+                    </form>
+                  </td>
+                {:else}
+                  <td></td>
+                  <td>{subtask.content}</td>
+                  <td class="date-cell">
+                    {#if subtask.due_date}
+                      {formatDate(subtask.due_date)}
+                    {/if}
+                  </td>
+                {/if}
+              </tr>
+              <!-- Insert form row (Subtask) -->
+              {#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && insertingSubtaskAt.index === stIdx}
+                <tr class="subtask-insert-row">
+                  <td colspan="5">
+                    <form on:submit|preventDefault={() => createSubtask(task.id, stIdx)} on:click|stopPropagation>
+                      <input
+                        type="text"
+                        placeholder="Subtask content"
+                        bind:value={newSubtaskContent}
+                        required
+                        style="margin-right:0.5em; width:32%;"
+                      />
+                      <select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="done">Done</option>
+                      </select>
+                      <input type="date" bind:value={newSubtaskDueDate} style="margin-right:0.5em;" />
+                      {#if newSubtaskDueDate}
+                        <button type="button" on:click={() => (newSubtaskDueDate = null)} style="margin-right:0.3em;">❌</button>
+                      {/if}
+                      <button type="submit" disabled={creatingSubtask || !newSubtaskContent.trim()}>
+                        {creatingSubtask ? 'Adding…' : 'Insert Subtask'}
+                      </button>
+                      <button type="button" on:click={() => (insertingSubtaskAt = null)}>Cancel</button>
+                    </form>
+                  </td>
+                </tr>
+              {/if}
+            {/each}
+            <!-- Insert subtask at end if user clicks + on task row -->
+            {#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && (task.subtasks.length === 0 || insertingSubtaskAt.index === task.subtasks.length - 1)}
+              <tr class="subtask-insert-row">
+                <td colspan="5">
+                  <form on:submit|preventDefault={() => createSubtask(task.id, task.subtasks.length - 1)} on:click|stopPropagation>
+                    <input
+                      type="text"
+                      placeholder="Subtask content"
+                      bind:value={newSubtaskContent}
+                      required
+                      style="margin-right:0.5em; width:32%;"
+                    />
+                    <select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
+                      <option value="open">Open</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="done">Done</option>
+                    </select>
+                    <input type="date" bind:value={newSubtaskDueDate} style="margin-right:0.5em;" />
+                    {#if newSubtaskDueDate}
+                      <button type="button" on:click={() => (newSubtaskDueDate = null)} style="margin-right:0.3em;">❌</button>
+                    {/if}
+                    <button type="submit" disabled={creatingSubtask || !newSubtaskContent.trim()}>
+                      {creatingSubtask ? 'Adding…' : 'Insert Subtask'}
+                    </button>
+                    <button type="button" on:click={() => (insertingSubtaskAt = null)}>Cancel</button>
+                  </form>
+                </td>
+              </tr>
+            {/if}
           {/if}
         {/each}
       </tbody>
