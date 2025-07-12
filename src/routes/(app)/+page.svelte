@@ -838,7 +838,7 @@
               {/if}
             {/each}
             <!-- Insert subtask at end if user clicks + on task row -->
-            {#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && (task.subtasks.length === 0 || insertingSubtaskAt.index === task.subtasks.length - 1)}
+            {#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
               <tr class="subtask-insert-row">
                 <td colspan="5">
                   <form on:submit|preventDefault={() => createSubtask(task.id, task.subtasks.length - 1)} on:click|stopPropagation>
