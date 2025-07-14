@@ -1,8 +1,12 @@
 {
 	"/(app)": [
-		"src/routes/(app)/+layout.server.ts",
 		"src/routes/(app)/+layout.server.ts"
 	],
 	"/": [],
-	"/auth/callback": []
+	"/auth/callback": [],
+	"/(app)/backup": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/projects": [],
+	"/projects/[projectId]": []
 }

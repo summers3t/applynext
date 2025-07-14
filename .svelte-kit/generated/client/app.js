@@ -6,14 +6,20 @@ export const nodes = [
 	() => import('./nodes/2'),
 	() => import('./nodes/3'),
 	() => import('./nodes/4'),
-	() => import('./nodes/5')
+	() => import('./nodes/5'),
+	() => import('./nodes/6'),
+	() => import('./nodes/7'),
+	() => import('./nodes/8')
 ];
 
 export const server_loads = [2];
 
 export const dictionary = {
-		"/(app)": [4,[2]],
-		"/auth/callback": [5,[3]]
+		"/": [4],
+		"/auth/callback": [6,[3]],
+		"/(app)/backup": [5,[2]],
+		"/projects": [7],
+		"/projects/[projectId]": [8]
 	};
 
 export const hooks = {
