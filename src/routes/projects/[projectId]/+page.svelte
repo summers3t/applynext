@@ -8,10 +8,11 @@
 
 	// ========== Project Info & Members ==========
 	type Member = {
-		user_id: string;
+		user_id: string | null;
 		email: string;
 		role: string;
 		status: string;
+		invited_email?: string | null; // <-- ADD THIS
 	};
 	type Project = {
 		id: string;
@@ -156,6 +157,26 @@
 		return email[0].toUpperCase();
 	}
 
+	async function fetchEmailsForUserIds(userIds: string[]) {
+		if (!userIds.length) return {};
+		const { data, error } = await supabase
+			.from('auth.users') // may need to use the admin API if using Supabase self-hosted, or use a Postgres view
+			.select('id, email')
+			.in('id', userIds);
+		if (error) {
+			console.error('Failed to fetch user emails:', error);
+			return {};
+		}
+		// Build a map: { userId: email }
+		return (data || []).reduce(
+			(map, row) => {
+				map[row.id] = row.email;
+				return map;
+			},
+			{} as Record<string, string>
+		);
+	}
+
 	// ---- Project & Members ----
 	async function loadProject() {
 		if (!projectId || projectId.length < 10) {
@@ -181,19 +202,41 @@
 		}
 		project = projectData;
 		// Members
+
 		const { data: memberRows, error: err2 } = await supabase
 			.from('project_users')
 			.select('user_id, role, status, invited_email')
 			.eq('project_id', projectId);
+
+		console.log('Member rows from Supabase:', memberRows);
+
 		if (err2) {
 			errorProject = err2.message;
 			members = [];
 			loadingProject = false;
 			return;
 		}
+
+		const userIds = (memberRows ?? []).filter((r) => r.user_id).map((r) => r.user_id);
+
+		let userEmailMap: Record<string, string> = {};
+		if (userIds.length > 0) {
+			const { data: emailRows } = await supabase
+				.from('user_emails')
+				.select('id, email')
+				.in('id', userIds);
+			userEmailMap = (emailRows ?? []).reduce(
+				(map, row) => {
+					map[row.id] = row.email;
+					return map;
+				},
+				{} as Record<string, string>
+			);
+		}
+
 		members = (memberRows ?? []).map((row: MemberRow) => {
-			let email = row.invited_email || 'Unknown';
-			// If this row is for the current user (i.e., logged in), show their real email
+			let email = row.invited_email || (row.user_id && userEmailMap[row.user_id]) || 'Unknown';
+			// For self, always show your own email (cleaner experience)
 			if (row.user_id && sessionValue?.user?.id === row.user_id) {
 				email = sessionValue?.user?.email ?? 'Unknown';
 			}
@@ -201,7 +244,8 @@
 				user_id: row.user_id,
 				email,
 				role: row.role,
-				status: row.status ?? (row.invited_email ? 'Invited' : 'Active')
+				status: row.status ?? (row.invited_email ? 'Invited' : 'Active'),
+				invited_email: row.invited_email
 			};
 		});
 		// Set my role
@@ -241,14 +285,23 @@
 		inviting = false;
 		await loadProject();
 	}
-	async function updateMemberRole(userId: string, newRole: string) {
-		updateRoleError = '';
-		updatingRoleUserId = userId;
-		const { error } = await supabase
-			.from('project_users')
-			.update({ role: newRole })
-			.eq('project_id', projectId)
-			.eq('user_id', userId);
+	async function updateMemberRole(
+		userId: string | undefined,
+		newRole: string,
+		invitedEmail?: string
+	) {
+		// Only admins can do this (already handled in UI)
+		if (!projectId || (!userId && !invitedEmail)) return;
+		updatingRoleUserId = userId || invitedEmail || '';
+		let match;
+		if (userId) {
+			match = { project_id: projectId, user_id: userId };
+		} else if (invitedEmail) {
+			match = { project_id: projectId, invited_email: invitedEmail };
+		} else {
+			return;
+		}
+		const { error } = await supabase.from('project_users').update({ role: newRole }).match(match);
 		updatingRoleUserId = '';
 		if (error) {
 			updateRoleError = error.message;
@@ -256,15 +309,19 @@
 			await loadProject();
 		}
 	}
-	async function removeMember(userId: string) {
+	async function removeMember(userId: string | undefined, invitedEmail?: string) {
 		if (!confirm('Are you sure you want to remove this member?')) return;
 		removeError = '';
-		removingUserId = userId;
-		const { error } = await supabase
-			.from('project_users')
-			.delete()
-			.eq('project_id', projectId)
-			.eq('user_id', userId);
+		removingUserId = userId || invitedEmail || '';
+		let match;
+		if (userId) {
+			match = { project_id: projectId, user_id: userId };
+		} else if (invitedEmail) {
+			match = { project_id: projectId, invited_email: invitedEmail };
+		} else {
+			return;
+		}
+		const { error } = await supabase.from('project_users').delete().match(match);
 		removingUserId = '';
 		if (error) {
 			removeError = error.message;
@@ -770,15 +827,20 @@
 			<tbody>
 				{#each members as m}
 					<tr>
-						<td>{m.email}</td>
+						<td>
+							{m.email}
+						</td>
 						<td>
 							{#if myRole === 'admin' && m.user_id !== sessionValue?.user.id}
 								<select
 									bind:value={m.role}
 									on:change={(e) =>
-										updateMemberRole(m.user_id, (e.target as HTMLSelectElement).value)}
-									disabled={updatingRoleUserId === m.user_id}
-									style="min-width:7em;"
+										updateMemberRole(
+											m.user_id || '',
+											(e.target as HTMLSelectElement).value,
+											m.invited_email ? m.invited_email : undefined
+										)}
+									disabled={updatingRoleUserId === (m.user_id || m.invited_email)}
 								>
 									<option value="admin">Admin</option>
 									<option value="editor">Editor</option>
@@ -788,16 +850,19 @@
 								{m.role}
 							{/if}
 						</td>
-						<td>{m.status}</td>
+						<td>
+							{m.status}
+						</td>
 						{#if myRole === 'admin'}
 							<td>
-								{#if m.user_id !== sessionValue?.user.id}
+								{#if (m.user_id && m.user_id !== sessionValue?.user.id) || (!m.user_id && m.invited_email)}
 									<button
-										on:click={() => removeMember(m.user_id)}
-										disabled={removingUserId === m.user_id}
+										on:click={() =>
+											removeMember(m.user_id || undefined, m.invited_email || undefined)}
+										disabled={removingUserId === (m.user_id || m.invited_email)}
 										style="color:#fff; background:#e74c3c; border:none; padding:0.3em 1.1em; border-radius:0.5em; cursor:pointer;"
 									>
-										{removingUserId === m.user_id ? 'Removing…' : 'Remove'}
+										{removingUserId === (m.user_id || m.invited_email) ? 'Removing…' : 'Remove'}
 									</button>
 								{/if}
 							</td>
