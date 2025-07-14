@@ -19,7 +19,10 @@
 		name: string;
 		description: string | null;
 		deadline: string | null;
+		created_by: string; // <-- ADD THIS LINE
+		// ...any other fields you have
 	};
+
 	type MemberRow = {
 		user_id: string;
 		role: string;
@@ -38,6 +41,28 @@
 	let errorProject = '';
 
 	let sessionValue = get(session);
+
+	let activeTab: "members" | "edit" = "members"; // default tab is Members
+	let isCreator = false; // Will be set after loading project
+
+	// ----- Edit Project state -----
+	let editProjectName = '';
+	let editProjectDesc = '';
+	let editProjectDeadline: string | null = null;
+	let updatingProject = false;
+	let projectUpdateError = '';
+	let projectUpdateSuccess = false;
+	let showMembersPanel = false;
+	let showEditProjectPanel = false;
+
+	$: isCreator =
+		!!project && !!sessionValue?.user?.id && project.created_by === sessionValue.user.id;
+
+	$: if (project && activeTab === 'edit') {
+		editProjectName = project.name;
+		editProjectDesc = project.description || '';
+		editProjectDeadline = project.deadline || null;
+	}
 
 	// --- Invite Member UI/Logic ---
 	let inviteEmail = '';
@@ -87,7 +112,7 @@
 		sort_index: number;
 		created_at: string;
 		updated_at: string;
-		created_by_email?: string; // 👈 Add this
+		created_by_email?: string;
 		subtasks: Subtask[];
 	};
 
@@ -127,6 +152,11 @@
 	let expandedTasks: Set<string> = new Set();
 
 	// ---- Helpers ----
+	function closePanels() {
+		showMembersPanel = false;
+		showEditProjectPanel = false;
+	}
+
 	function formatDate(dateStr: string | null | undefined): string {
 		if (!dateStr) return '';
 		const parts = dateStr.slice(0, 10).split('-');
@@ -155,6 +185,28 @@
 			return (first + second).slice(0, 2);
 		}
 		return email[0].toUpperCase();
+	}
+
+	async function updateProject() {
+		projectUpdateError = '';
+		projectUpdateSuccess = false;
+		updatingProject = true;
+		const { error } = await supabase
+			.from('projects')
+			.update({
+				name: editProjectName.trim(),
+				description: editProjectDesc.trim(),
+				deadline: editProjectDeadline
+			})
+			.eq('id', projectId);
+		updatingProject = false;
+		if (error) {
+			projectUpdateError = error.message;
+			return;
+		}
+		// Re-load latest data
+		await loadProject();
+		projectUpdateSuccess = true;
 	}
 
 	async function fetchEmailsForUserIds(userIds: string[]) {
@@ -192,7 +244,7 @@
 		// Project info
 		const { data: projectData, error: err1 } = await supabase
 			.from('projects')
-			.select('id, name, description, deadline')
+			.select('id, name, description, deadline, created_by')
 			.eq('id', projectId)
 			.single();
 		if (err1 || !projectData) {
@@ -201,6 +253,9 @@
 			return;
 		}
 		project = projectData;
+		isCreator =
+			!!project && !!sessionValue?.user?.id && project.created_by === sessionValue.user.id;
+
 		// Members
 
 		const { data: memberRows, error: err2 } = await supabase
@@ -786,18 +841,230 @@
 	{:else if errorProject}
 		<p style="color:red;">{errorProject}</p>
 	{:else if project}
-		<button class="nav-btn" on:click={() => goto('/projects')} style="margin-bottom:1.5em;">
-			← All Projects
-		</button>
+		<!-- Project Top Navigation Buttons -->
+		<div
+			class="project-header-buttons"
+			style="display:flex; align-items:center; gap:1em; margin-bottom:1.5em;"
+		>
+			<div class="project-toolbar">
+				<button class="nav-btn" on:click={() => goto('/projects')}>← All Projects</button>
 
-		{#if myRole === 'admin'}
-			<button class="delete-project-btn" on:click={handleDeleteProject} disabled={deletingProject}>
-				🗑️ {deletingProject ? 'Deleting…' : 'Delete Project'}
-			</button>
-			{#if deleteError}
-				<div style="color:#c00; font-weight:bold;">{deleteError}</div>
+				<button
+					class:active-tab={showMembersPanel}
+					class="toolbar-btn"
+					on:click={() => {
+						showMembersPanel = !showMembersPanel;
+						showEditProjectPanel = false;
+					}}
+				>
+					👥 Members
+				</button>
+
+				{#if isCreator}
+					<button
+						class:active-tab={showEditProjectPanel}
+						class="toolbar-btn"
+						on:click={() => {
+							showEditProjectPanel = !showEditProjectPanel;
+							showMembersPanel = false;
+							if (showEditProjectPanel && project) {
+								// Prefill form fields with current project values
+								editProjectName = project.name;
+								editProjectDesc = project.description ?? '';
+								editProjectDeadline = project.deadline ?? null;
+							}
+						}}
+					>
+						✏️ Edit Project
+					</button>
+				{/if}
+
+				{#if myRole === 'admin' || isCreator}
+					<button
+						class="delete-project-btn"
+						on:click={handleDeleteProject}
+						disabled={deletingProject}
+					>
+						🗑️ Delete Project
+					</button>
+				{/if}
+			</div>
+			<!-- MEMBERS PANEL -->
+			{#if showMembersPanel}
+				<div class="panel-overlay" on:click={closePanels}></div>
+				<div class="panel-drawer members-drawer" on:click|stopPropagation>
+					<!-- MOVE your entire Members content here! -->
+					<h3>Members</h3>
+					{#if updateRoleError}
+						<div style="color:#c00;">{updateRoleError}</div>
+					{/if}
+					{#if removeError}
+						<div style="color:#c00;">{removeError}</div>
+					{/if}
+					<table>
+						<thead>
+							<tr>
+								<th>Email</th>
+								<th>Role</th>
+								<th>Status</th>
+								{#if myRole === 'admin'}
+									<th>Remove</th>
+								{/if}
+							</tr>
+						</thead>
+						<tbody>
+							{#each members as m}
+								<tr>
+									<td>
+										{m.email}
+									</td>
+									<td>
+										{#if myRole === 'admin' && m.user_id !== sessionValue?.user.id}
+											<select
+												bind:value={m.role}
+												on:change={(e) =>
+													updateMemberRole(
+														m.user_id || '',
+														(e.target as HTMLSelectElement).value,
+														m.invited_email ? m.invited_email : undefined
+													)}
+												disabled={updatingRoleUserId === (m.user_id || m.invited_email)}
+											>
+												{#if isCreator}
+													<option value="admin">Admin</option>
+												{/if}
+												<option value="editor">Editor</option>
+												<option value="viewer">Viewer</option>
+											</select>
+										{:else}
+											{m.role}
+										{/if}
+									</td>
+									<td>
+										{m.status}
+									</td>
+									{#if myRole === 'admin'}
+										<td>
+											{#if (m.user_id && m.user_id !== sessionValue?.user.id) || (!m.user_id && m.invited_email)}
+												<button
+													on:click={() =>
+														removeMember(m.user_id || undefined, m.invited_email || undefined)}
+													disabled={removingUserId === (m.user_id || m.invited_email)}
+													style="color:#fff; background:#e74c3c; border:none; padding:0.3em 1.1em; border-radius:0.5em; cursor:pointer;"
+												>
+													{removingUserId === (m.user_id || m.invited_email)
+														? 'Removing…'
+														: 'Remove'}
+												</button>
+											{/if}
+										</td>
+									{/if}
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+					{#if myRole === 'admin'}
+						<div class="invite-container">
+							<h4>Invite a member</h4>
+							<form
+								on:submit|preventDefault={inviteMember}
+								style="display:flex; gap:0.7em; align-items:center;"
+							>
+								<input
+									type="email"
+									placeholder="Email"
+									bind:value={inviteEmail}
+									required
+									style="min-width:17em;"
+								/>
+								<select bind:value={inviteRole}>
+									{#if isCreator}
+										<option value="admin">Admin</option>
+									{/if}
+									<option value="editor">Editor</option>
+									<option value="viewer">Viewer</option>
+								</select>
+
+								{#if !isCreator}
+									<div style="color:#888; font-size:0.98em; margin-bottom:0.5em;">
+										Only the project creator can assign admin rights.
+									</div>
+								{/if}
+
+								<button type="submit" disabled={inviting || !inviteEmail.trim()}>Invite</button>
+							</form>
+							{#if inviteError}<span style="color:#c00; margin-left:0.7em;">{inviteError}</span
+								>{/if}
+							{#if inviteSuccess}<span style="color:#080; margin-left:0.7em;">{inviteSuccess}</span
+								>{/if}
+						</div>
+					{/if}
+					<!-- ... (copy all your Members table, invite form, etc, here) ... -->
+					<button on:click={closePanels} class="close-panel-btn">Close</button>
+				</div>
 			{/if}
-		{/if}
+
+			<!-- EDIT PROJECT PANEL (only creator can see) -->
+			{#if showEditProjectPanel && isCreator}
+				<div class="panel-overlay" on:click={closePanels}></div>
+				<div class="panel-drawer edit-drawer" on:click|stopPropagation>
+					<!-- MOVE your Edit Project form here! -->
+					<h3>Edit Project</h3>
+					<form
+						on:submit|preventDefault={updateProject}
+						style="display: flex; flex-direction: column; gap: 1em; max-width: 400px;"
+					>
+						<div>
+							<label for="edit-name"><b>Name</b></label>
+							<input
+								id="edit-name"
+								type="text"
+								bind:value={editProjectName}
+								maxlength="80"
+								required
+								style="width: 100%;"
+							/>
+						</div>
+						<div>
+							<label for="edit-desc"><b>Description</b></label>
+							<textarea
+								id="edit-desc"
+								bind:value={editProjectDesc}
+								maxlength="200"
+								rows="2"
+								style="width: 100%;"
+							/>
+						</div>
+						<div>
+							<label for="edit-deadline"><b>Deadline</b></label>
+							<input
+								id="edit-deadline"
+								type="date"
+								bind:value={editProjectDeadline}
+								style="width: 100%;"
+							/>
+						</div>
+						<div>
+							<button
+								type="submit"
+								disabled={updatingProject}
+								style="background:#1976d2;color:#fff;padding:0.5em 2em;border:none;border-radius:1em;"
+							>
+								{updatingProject ? 'Saving…' : 'Save Changes'}
+							</button>
+							{#if projectUpdateSuccess}
+								<span style="color: #080; margin-left:1em;">Project updated!</span>
+							{/if}
+							{#if projectUpdateError}
+								<span style="color: #c00; margin-left:1em;">{projectUpdateError}</span>
+							{/if}
+						</div>
+					</form>
+					<!-- ... (copy all your Edit Project form here) ... -->
+					<button on:click={closePanels} class="close-panel-btn">Close</button>
+				</div>
+			{/if}
+		</div>
 
 		<h2>{project.name}</h2>
 		<p>{project.description}</p>
@@ -806,94 +1073,15 @@
 			{project.deadline ? formatDate(project.deadline) : '—'}
 			<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
 		</p>
-		<h3>Members</h3>
-		{#if updateRoleError}
-			<div style="color:#c00;">{updateRoleError}</div>
+
+		{#if activeTab === 'members'}
+			<!-- ...all your current Members logic, table, and invite user form... -->
 		{/if}
-		{#if removeError}
-			<div style="color:#c00;">{removeError}</div>
-		{/if}
-		<table>
-			<thead>
-				<tr>
-					<th>Email</th>
-					<th>Role</th>
-					<th>Status</th>
-					{#if myRole === 'admin'}
-						<th>Remove</th>
-					{/if}
-				</tr>
-			</thead>
-			<tbody>
-				{#each members as m}
-					<tr>
-						<td>
-							{m.email}
-						</td>
-						<td>
-							{#if myRole === 'admin' && m.user_id !== sessionValue?.user.id}
-								<select
-									bind:value={m.role}
-									on:change={(e) =>
-										updateMemberRole(
-											m.user_id || '',
-											(e.target as HTMLSelectElement).value,
-											m.invited_email ? m.invited_email : undefined
-										)}
-									disabled={updatingRoleUserId === (m.user_id || m.invited_email)}
-								>
-									<option value="admin">Admin</option>
-									<option value="editor">Editor</option>
-									<option value="viewer">Viewer</option>
-								</select>
-							{:else}
-								{m.role}
-							{/if}
-						</td>
-						<td>
-							{m.status}
-						</td>
-						{#if myRole === 'admin'}
-							<td>
-								{#if (m.user_id && m.user_id !== sessionValue?.user.id) || (!m.user_id && m.invited_email)}
-									<button
-										on:click={() =>
-											removeMember(m.user_id || undefined, m.invited_email || undefined)}
-										disabled={removingUserId === (m.user_id || m.invited_email)}
-										style="color:#fff; background:#e74c3c; border:none; padding:0.3em 1.1em; border-radius:0.5em; cursor:pointer;"
-									>
-										{removingUserId === (m.user_id || m.invited_email) ? 'Removing…' : 'Remove'}
-									</button>
-								{/if}
-							</td>
-						{/if}
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-		{#if myRole === 'admin'}
-			<div class="invite-container">
-				<h4>Invite a member</h4>
-				<form
-					on:submit|preventDefault={inviteMember}
-					style="display:flex; gap:0.7em; align-items:center;"
-				>
-					<input
-						type="email"
-						placeholder="Email"
-						bind:value={inviteEmail}
-						required
-						style="min-width:17em;"
-					/>
-					<select bind:value={inviteRole}>
-						<option value="admin">Admin</option>
-						<option value="editor">Editor</option>
-						<option value="viewer">Viewer</option>
-					</select>
-					<button type="submit" disabled={inviting || !inviteEmail.trim()}>Invite</button>
-				</form>
-				{#if inviteError}<span style="color:#c00; margin-left:0.7em;">{inviteError}</span>{/if}
-				{#if inviteSuccess}<span style="color:#080; margin-left:0.7em;">{inviteSuccess}</span>{/if}
+
+		{#if activeTab === 'edit' && isCreator}
+			<!-- Placeholder for Edit Project form. Step 3 will fill this in. -->
+			<div class="edit-project-container">
+				<!-- FORM WILL BE ADDED IN NEXT STEP -->
 			</div>
 		{/if}
 
@@ -1362,6 +1550,33 @@
 		padding: 2em 2em 1em 2em;
 	}
 
+	.project-toolbar {
+		display: flex;
+		gap: 1.2em;
+		margin-bottom: 1.5em;
+		align-items: center;
+	}
+	.active-tab {
+		background: #1976d2;
+		color: #fff;
+	}
+
+	.tab-btn {
+		margin-left: 0.5em;
+		margin-right: 0.5em;
+		padding: 0.45em 1.7em;
+		font-weight: 600;
+		border-radius: 1.2em;
+		border: none;
+		background: #f0f4fc;
+		cursor: pointer;
+		transition: background 0.12s;
+	}
+	.tab-btn.active {
+		background: #1976d2;
+		color: #fff;
+	}
+
 	.nav-btn {
 		padding: 0.38em 1.5em;
 		border-radius: 1em;
@@ -1443,6 +1658,35 @@
 		opacity: 0.4;
 		cursor: default;
 	}
+
+	.toolbar-btn {
+		background: #f0f4fa;
+		color: #1976d2;
+		border: none;
+		border-radius: 0.7em;
+		padding: 0.55em 1.4em;
+		font-size: 1.05em;
+		margin-right: 0.2em;
+		font-weight: 600;
+		cursor: pointer;
+		transition:
+			background 0.14s,
+			color 0.14s,
+			box-shadow 0.14s;
+		box-shadow: 0 1px 4px #0001;
+	}
+	.toolbar-btn:hover,
+	.toolbar-btn:focus {
+		background: #e3edfc;
+		color: #0d47a1;
+		outline: none;
+	}
+	.active-tab.toolbar-btn {
+		background: #1976d2 !important;
+		color: #fff !important;
+		box-shadow: 0 2px 8px #1976d288;
+	}
+
 	.delete-btn {
 		color: #fff;
 		background: #e74c3c;
@@ -1518,5 +1762,34 @@
 		color: #888;
 		font-size: 0.97em;
 		font-style: italic;
+	}
+	.panel-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.1);
+		z-index: 100;
+	}
+	.panel-drawer {
+		position: fixed;
+		top: 6em;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #fff;
+		border-radius: 1em;
+		box-shadow: 0 4px 32px #0003;
+		padding: 2em;
+		z-index: 101;
+		min-width: 350px;
+		max-width: 90vw;
+	}
+	.close-panel-btn {
+		margin-top: 1em;
+		background: #eee;
+		color: #1976d2;
+		border: none;
+		border-radius: 0.6em;
+		padding: 0.5em 1.4em;
+		font-weight: 600;
+		cursor: pointer;
 	}
 </style>
