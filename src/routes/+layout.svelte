@@ -1,5 +1,6 @@
 <script lang="ts">
-	export let data;
+	// svelte-ignore export_let_unused
+		export let data;
 
 	import { supabase } from '$lib/supabaseClient';
 	import { session } from '$lib/session';

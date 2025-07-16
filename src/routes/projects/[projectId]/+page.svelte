@@ -42,7 +42,9 @@
 
 	let sessionValue = get(session);
 
-	let activeTab: "members" | "edit" = "members"; // default tab is Members
+	type TabKey = 'members' | 'edit' | 'tasks'; // add 'tasks' or others as needed
+	let activeTab: TabKey = 'members';
+
 	let isCreator = false; // Will be set after loading project
 
 	// ----- Edit Project state -----
@@ -58,11 +60,45 @@
 	$: isCreator =
 		!!project && !!sessionValue?.user?.id && project.created_by === sessionValue.user.id;
 
-	$: if (project && activeTab === 'edit') {
-		editProjectName = project.name;
-		editProjectDesc = project.description || '';
-		editProjectDeadline = project.deadline || null;
-	}
+	//  Filter/Search State
+	let statusFilter: 'all' | 'open' | 'in_progress' | 'done' = 'all';
+	let dueFilter: 'all' | 'overdue' | 'today' | 'upcoming' | 'none' = 'all';
+	let searchQuery = '';
+
+	$: filteredTasks = tasks
+		// Status filter
+		.filter((t) => statusFilter === 'all' || t.status === statusFilter)
+		// Due date filter
+		.filter((t) => {
+			if (dueFilter === 'all') return true;
+			if (dueFilter === 'none') return !t.due_date;
+			if (!t.due_date) return false;
+			const today = new Date();
+			const due = new Date(t.due_date);
+			if (dueFilter === 'overdue') {
+				// Before today, not done
+				return (
+					due < new Date(today.getFullYear(), today.getMonth(), today.getDate()) &&
+					t.status !== 'done'
+				);
+			}
+			if (dueFilter === 'today') {
+				return due.toISOString().slice(0, 10) === today.toISOString().slice(0, 10);
+			}
+			if (dueFilter === 'upcoming') {
+				return due > today && t.status !== 'done';
+			}
+			return true;
+		})
+		// Search filter
+		.filter((t) => {
+			if (!searchQuery.trim()) return true;
+			const q = searchQuery.trim().toLowerCase();
+			return (
+				(t.title && t.title.toLowerCase().includes(q)) ||
+				(t.description && t.description.toLowerCase().includes(q))
+			);
+		});
 
 	// --- Invite Member UI/Logic ---
 	let inviteEmail = '';
@@ -152,6 +188,11 @@
 	let expandedTasks: Set<string> = new Set();
 
 	// ---- Helpers ----
+	function filteredIndexToTasksIndex(filteredIndex: number): number {
+		const taskId = filteredTasks[filteredIndex]?.id;
+		return tasks.findIndex((t) => t.id === taskId);
+	}
+
 	function closePanels() {
 		showMembersPanel = false;
 		showEditProjectPanel = false;
@@ -542,13 +583,24 @@
 
 	async function moveSelectedTask(offset: number) {
 		if (!canEditTasks() || !selected || selected.type !== 'task') return;
-		const idx = tasks.findIndex((t) => t.id === selected?.id);
-		if (idx === -1) return;
-		const swapWith = idx + offset;
-		if (swapWith < 0 || swapWith >= tasks.length) return;
+
+		// Use the filteredTasks array, not tasks, for visible order
+		const filteredIdx = filteredTasks.findIndex((t) => t.id === selected?.id);
+		if (filteredIdx === -1) return;
+
+		const filteredSwapWith = filteredIdx + offset;
+		if (filteredSwapWith < 0 || filteredSwapWith >= filteredTasks.length) return;
+
+		// Map filtered indices back to main tasks array
+		const mainIdx = tasks.findIndex((t) => t.id === filteredTasks[filteredIdx].id);
+		const mainSwapWith = tasks.findIndex((t) => t.id === filteredTasks[filteredSwapWith].id);
+
+		if (mainIdx === -1 || mainSwapWith === -1) return;
+
 		const newOrder = [...tasks];
-		const [moved] = newOrder.splice(idx, 1);
-		newOrder.splice(swapWith, 0, moved);
+		const [moved] = newOrder.splice(mainIdx, 1);
+		newOrder.splice(mainSwapWith, 0, moved);
+
 		await reindexTasks(newOrder);
 		selected = { type: 'task', id: moved.id };
 	}
@@ -890,9 +942,28 @@
 				{/if}
 			</div>
 			<!-- MEMBERS PANEL -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			{#if showMembersPanel}
-				<div class="panel-overlay" on:click={closePanels}></div>
-				<div class="panel-drawer members-drawer" on:click|stopPropagation>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore element_invalid_self_closing_tag -->
+				<div
+					class="panel-overlay"
+					role="button"
+					tabindex="0"
+					aria-label="Close panel"
+					on:click={closePanels}
+					on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && closePanels()}
+				></div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<!-- svelte-ignore a11y_interactive_supports_focus -->
+				<div
+					class="panel-drawer members-drawer"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Project members"
+					on:click|stopPropagation
+				>
 					<!-- MOVE your entire Members content here! -->
 					<h3>Members</h3>
 					{#if updateRoleError}
@@ -999,15 +1070,26 @@
 								>{/if}
 						</div>
 					{/if}
-					<!-- ... (copy all your Members table, invite form, etc, here) ... -->
+
 					<button on:click={closePanels} class="close-panel-btn">Close</button>
 				</div>
 			{/if}
 
 			<!-- EDIT PROJECT PANEL (only creator can see) -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			{#if showEditProjectPanel && isCreator}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div class="panel-overlay" on:click={closePanels}></div>
-				<div class="panel-drawer edit-drawer" on:click|stopPropagation>
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_interactive_supports_focus -->
+				<div
+					class="panel-drawer edit-drawer"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Edit project"
+					on:click|stopPropagation
+				>
 					<!-- MOVE your Edit Project form here! -->
 					<h3>Edit Project</h3>
 					<form
@@ -1025,6 +1107,7 @@
 								style="width: 100%;"
 							/>
 						</div>
+						<!-- svelte-ignore element_invalid_self_closing_tag -->
 						<div>
 							<label for="edit-desc"><b>Description</b></label>
 							<textarea
@@ -1060,7 +1143,7 @@
 							{/if}
 						</div>
 					</form>
-					<!-- ... (copy all your Edit Project form here) ... -->
+
 					<button on:click={closePanels} class="close-panel-btn">Close</button>
 				</div>
 			{/if}
@@ -1074,16 +1157,53 @@
 			<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
 		</p>
 
-		{#if activeTab === 'members'}
-			<!-- ...all your current Members logic, table, and invite user form... -->
-		{/if}
+		<!-- Filters & Search bar -->
+		<div
+			class="task-filters"
+			style="display:flex; gap:1em; align-items:center; margin-bottom:1.5em;"
+		>
+			<!-- Status Filter -->
+			<label>
+				Status:
+				<select bind:value={statusFilter}>
+					<option value="all">All</option>
+					<option value="open">Open</option>
+					<option value="in_progress">In Progress</option>
+					<option value="done">Done</option>
+				</select>
+			</label>
 
-		{#if activeTab === 'edit' && isCreator}
-			<!-- Placeholder for Edit Project form. Step 3 will fill this in. -->
-			<div class="edit-project-container">
-				<!-- FORM WILL BE ADDED IN NEXT STEP -->
-			</div>
-		{/if}
+			<!-- Due Date Filter -->
+			<label>
+				Due:
+				<select bind:value={dueFilter}>
+					<option value="all">All</option>
+					<option value="overdue">Overdue</option>
+					<option value="today">Today</option>
+					<option value="upcoming">Upcoming</option>
+					<option value="none">No Due Date</option>
+				</select>
+			</label>
+
+			<!-- Search -->
+			<input
+				type="text"
+				placeholder="Search tasks…"
+				bind:value={searchQuery}
+				style="min-width: 12em;"
+			/>
+
+			<!-- Clear Filters Button -->
+			<button
+				on:click={() => {
+					statusFilter = 'all';
+					dueFilter = 'all';
+					searchQuery = '';
+				}}
+				disabled={statusFilter === 'all' && dueFilter === 'all' && !searchQuery.trim()}
+				style="margin-left:1em;">Clear filters</button
+			>
+		</div>
 
 		<!-- TASK MANAGEMENT SECTION (Project Scoped) -->
 		<h3 style="margin-top:2em;">Project Tasks</h3>
@@ -1165,7 +1285,7 @@
 					disabled={!canEditTasks() ||
 						!selected ||
 						(selected?.type === 'task' &&
-							(editingTaskId !== null || tasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
+							(editingTaskId !== null || filteredTasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
 						(selected?.type === 'subtask' &&
 							(editingSubtaskId !== null ||
 								!selected?.parentTaskId ||
@@ -1190,7 +1310,7 @@
 						!selected ||
 						(selected?.type === 'task' &&
 							(editingTaskId !== null ||
-								tasks.findIndex((t) => t.id === selected?.id) === tasks.length - 1)) ||
+								filteredTasks.findIndex((t) => t.id === selected?.id) === filteredTasks.length - 1)) ||
 						(selected?.type === 'subtask' &&
 							(editingSubtaskId !== null ||
 								!selected?.parentTaskId ||
@@ -1236,7 +1356,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each tasks as task, i}
+					{#each filteredTasks as task, i}
 						<!-- TASK ROW -->
 						<tr
 							class:selected-row={selected && selected.type === 'task' && selected.id === task.id}
@@ -1274,7 +1394,9 @@
 								></span>
 							</td>
 							{#if editingTaskId === task.id}
+								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<td colspan="4" class="edit-form-row">
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<form
 										on:submit|preventDefault={saveEditTask}
 										on:click|stopPropagation
@@ -1331,8 +1453,13 @@
 						<!-- Insert form row (Task) -->
 						{#if insertingAtIndex === i}
 							<tr class="insert-form-row">
+								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<td colspan="5">
-									<form on:submit|preventDefault={() => createTask(i)} on:click|stopPropagation>
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<form
+										on:submit|preventDefault={() => createTask(filteredIndexToTasksIndex(i))}
+										on:click|stopPropagation
+									>
 										<input
 											type="text"
 											placeholder="Task title"
@@ -1400,7 +1527,9 @@
 										></span>
 									</td>
 									{#if editingSubtaskId === subtask.id}
+										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 										<td colspan="3" class="subtask-edit-row">
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<form
 												on:submit|preventDefault={saveEditSubtask}
 												on:click|stopPropagation
@@ -1447,7 +1576,9 @@
 								<!-- Insert form row (Subtask) -->
 								{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && insertingSubtaskAt.index === stIdx}
 									<tr class="subtask-insert-row">
+										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 										<td colspan="5">
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<form
 												on:submit|preventDefault={() => createSubtask(task.id, stIdx)}
 												on:click|stopPropagation
@@ -1492,7 +1623,9 @@
 							{/each}
 							{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
 								<tr class="subtask-insert-row">
+									<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 									<td colspan="5">
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<form
 											on:submit|preventDefault={() =>
 												createSubtask(task.id, task.subtasks.length - 1)}
@@ -1557,22 +1690,6 @@
 		align-items: center;
 	}
 	.active-tab {
-		background: #1976d2;
-		color: #fff;
-	}
-
-	.tab-btn {
-		margin-left: 0.5em;
-		margin-right: 0.5em;
-		padding: 0.45em 1.7em;
-		font-weight: 600;
-		border-radius: 1.2em;
-		border: none;
-		background: #f0f4fc;
-		cursor: pointer;
-		transition: background 0.12s;
-	}
-	.tab-btn.active {
 		background: #1976d2;
 		color: #fff;
 	}
@@ -1738,9 +1855,7 @@
 		min-width: 8em;
 	}
 	.insert-form-row td,
-	.edit-form-row td,
-	.subtask-insert-row td,
-	.subtask-edit-row td {
+	.subtask-insert-row td {
 		background: #f9fafd !important;
 		border-bottom: 1px solid #e5e5ee;
 	}
