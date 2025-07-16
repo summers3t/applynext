@@ -5,6 +5,7 @@
 	import { get } from 'svelte/store';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 
 	// ========== Project Info & Members ==========
 	type Member = {
@@ -61,39 +62,39 @@
 		!!project && !!sessionValue?.user?.id && project.created_by === sessionValue.user.id;
 
 	//  Filter/Search State
-	let statusFilter: 'all' | 'open' | 'in_progress' | 'done' = 'all';
-	let dueFilter: 'all' | 'overdue' | 'today' | 'upcoming' | 'none' = 'all';
-	let searchQuery = '';
+	// let statusFilter: 'all' | 'open' | 'in_progress' | 'done' = 'all';
+	// let dueFilter: 'all' | 'overdue' | 'today' | 'upcoming' | 'none' = 'all';
+	// let searchQuery = '';
 
 	$: filteredTasks = tasks
 		// Status filter
-		.filter((t) => statusFilter === 'all' || t.status === statusFilter)
+		.filter((t) => $statusFilter === 'all' || t.status === $statusFilter)
 		// Due date filter
 		.filter((t) => {
-			if (dueFilter === 'all') return true;
-			if (dueFilter === 'none') return !t.due_date;
+			if ($dueFilter === 'all') return true;
+			if ($dueFilter === 'none') return !t.due_date;
 			if (!t.due_date) return false;
 			const today = new Date();
 			const due = new Date(t.due_date);
-			if (dueFilter === 'overdue') {
+			if ($dueFilter === 'overdue') {
 				// Before today, not done
 				return (
 					due < new Date(today.getFullYear(), today.getMonth(), today.getDate()) &&
 					t.status !== 'done'
 				);
 			}
-			if (dueFilter === 'today') {
+			if ($dueFilter === 'today') {
 				return due.toISOString().slice(0, 10) === today.toISOString().slice(0, 10);
 			}
-			if (dueFilter === 'upcoming') {
+			if ($dueFilter === 'upcoming') {
 				return due > today && t.status !== 'done';
 			}
 			return true;
 		})
 		// Search filter
 		.filter((t) => {
-			if (!searchQuery.trim()) return true;
-			const q = searchQuery.trim().toLowerCase();
+			if (!$searchQuery.trim()) return true;
+			const q = $searchQuery.trim().toLowerCase();
 			return (
 				(t.title && t.title.toLowerCase().includes(q)) ||
 				(t.description && t.description.toLowerCase().includes(q))
@@ -1157,53 +1158,6 @@
 			<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
 		</p>
 
-		<!-- Filters & Search bar -->
-		<div
-			class="task-filters"
-			style="display:flex; gap:1em; align-items:center; margin-bottom:1.5em;"
-		>
-			<!-- Status Filter -->
-			<label>
-				Status:
-				<select bind:value={statusFilter}>
-					<option value="all">All</option>
-					<option value="open">Open</option>
-					<option value="in_progress">In Progress</option>
-					<option value="done">Done</option>
-				</select>
-			</label>
-
-			<!-- Due Date Filter -->
-			<label>
-				Due:
-				<select bind:value={dueFilter}>
-					<option value="all">All</option>
-					<option value="overdue">Overdue</option>
-					<option value="today">Today</option>
-					<option value="upcoming">Upcoming</option>
-					<option value="none">No Due Date</option>
-				</select>
-			</label>
-
-			<!-- Search -->
-			<input
-				type="text"
-				placeholder="Search tasks…"
-				bind:value={searchQuery}
-				style="min-width: 12em;"
-			/>
-
-			<!-- Clear Filters Button -->
-			<button
-				on:click={() => {
-					statusFilter = 'all';
-					dueFilter = 'all';
-					searchQuery = '';
-				}}
-				disabled={statusFilter === 'all' && dueFilter === 'all' && !searchQuery.trim()}
-				style="margin-left:1em;">Clear filters</button
-			>
-		</div>
 
 		<!-- TASK MANAGEMENT SECTION (Project Scoped) -->
 		<h3 style="margin-top:2em;">Project Tasks</h3>
@@ -1285,7 +1239,8 @@
 					disabled={!canEditTasks() ||
 						!selected ||
 						(selected?.type === 'task' &&
-							(editingTaskId !== null || filteredTasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
+							(editingTaskId !== null ||
+								filteredTasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
 						(selected?.type === 'subtask' &&
 							(editingSubtaskId !== null ||
 								!selected?.parentTaskId ||
@@ -1310,7 +1265,8 @@
 						!selected ||
 						(selected?.type === 'task' &&
 							(editingTaskId !== null ||
-								filteredTasks.findIndex((t) => t.id === selected?.id) === filteredTasks.length - 1)) ||
+								filteredTasks.findIndex((t) => t.id === selected?.id) ===
+									filteredTasks.length - 1)) ||
 						(selected?.type === 'subtask' &&
 							(editingSubtaskId !== null ||
 								!selected?.parentTaskId ||

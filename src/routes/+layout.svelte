@@ -1,12 +1,13 @@
 <script lang="ts">
 	// svelte-ignore export_let_unused
-		export let data;
+	export let data;
 
 	import { supabase } from '$lib/supabaseClient';
 	import { session } from '$lib/session';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 
 	// Svelte store auto-subscription
 	$: userSession = $session; // $session is Svelte magic for "current value of the store"
@@ -72,6 +73,60 @@
 	<div class="left">
 		<b>ApplyNext</b>
 	</div>
+
+	<!-- Center: Filter/Search Bar (conditionally rendered) -->
+	{#if $session?.user && $page.url.pathname.startsWith('/projects/')}
+		<div class="center">
+			<!-- Filters & Search bar -->
+			<div
+				class="task-filters"
+				style="display:flex; gap:1em; align-items:center; margin-bottom:1.5em;"
+			>
+				<!-- Status Filter -->
+				<label>
+					Status:
+					<select bind:value={$statusFilter}>
+						<option value="all">All</option>
+						<option value="open">Open</option>
+						<option value="in_progress">In Progress</option>
+						<option value="done">Done</option>
+					</select>
+				</label>
+
+				<!-- Due Date Filter -->
+				<label>
+					Due:
+					<select bind:value={$dueFilter}>
+						<option value="all">All</option>
+						<option value="overdue">Overdue</option>
+						<option value="today">Today</option>
+						<option value="upcoming">Upcoming</option>
+						<option value="none">No Due Date</option>
+					</select>
+				</label>
+
+				<!-- Search -->
+				<input
+					type="text"
+					placeholder="Search tasks…"
+					bind:value={$searchQuery}
+					style="min-width: 12em;"
+				/>
+
+				<!-- Clear Filters Button -->
+				<button
+					on:click={() => {
+						$statusFilter = 'all';
+						$dueFilter = 'all';
+						$searchQuery = '';
+					}}
+					disabled={$statusFilter === 'all' && $dueFilter === 'all' && !$searchQuery.trim()}
+					style="margin-left:1em;">Clear filters</button
+				>
+			</div>
+		</div>
+	{/if}
+
 	<div class="right">
 		{#if $session?.user}
 			<span style="margin-right:1em;">Logged in as {$session.user.email}</span>
@@ -103,7 +158,7 @@
 		border-bottom: 1px solid #e1e3ec;
 		position: sticky;
 		top: 0;
-		z-index: 2;
+		z-index: 100;
 		box-sizing: border-box;
 		min-height: 3.2em;
 	}
