@@ -1771,6 +1771,8 @@
 	.center-main {
 		flex: 1 1 auto;
 		overflow-y: auto;
+		overflow: auto;
+		position: relative;
 		background: #fff;
 		/* background: rgba(255, 255, 255, 0.38); */
 		border-radius: 1em;
@@ -1959,6 +1961,20 @@
 		border-collapse: collapse;
 		margin-bottom: 1em;
 	}
+
+	.task-table thead th {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: rgba(245, 250, 255, 0.82);
+		backdrop-filter: blur(9px) saturate(1.07);
+		-webkit-backdrop-filter: blur(9px) saturate(1.07);
+		box-shadow: 0 4px 14px #1976d21b;
+		/* Optional: subtle border */
+		border-bottom: 2px solid rgba(180, 200, 230, 0.16);
+		/* No JS needed! */
+	}
+
 	.task-table th,
 	.task-table td {
 		padding: 0.5em;
