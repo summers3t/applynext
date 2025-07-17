@@ -1,1 +1,21 @@
 @import 'tailwindcss';
+
+/* --- Your custom global styles below --- */
+body {
+  /* Example: Bold Unsplash background image */
+  background: url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80') center/cover no-repeat fixed;
+  min-height: 100vh;
+}
+
+/* Optional: if you want a gradient instead of an image, use: */
+/*
+body {
+  background: linear-gradient(135deg, #b0e0ff 0%, #ffffff 60%, #f8d6f8 100%);
+  min-height: 100vh;
+}
+*/
+
+/* body {
+  background: orange !important;
+  min-height: 100vh;
+} */

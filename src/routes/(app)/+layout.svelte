@@ -2,6 +2,7 @@
   import { supabase } from '$lib/supabaseClient';
   import { session } from '$lib/session';
   import { onMount } from 'svelte';
+  import '../../app.css';
 
   async function signIn() {
     await supabase.auth.signInWithOAuth({ provider: 'google' });

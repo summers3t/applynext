@@ -2,6 +2,7 @@
 	// svelte-ignore export_let_unused
 	export let data;
 
+	import '../app.css';
 	import { supabase } from '$lib/supabaseClient';
 	import { session } from '$lib/session';
 	import { onMount } from 'svelte';

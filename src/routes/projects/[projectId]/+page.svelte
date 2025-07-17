@@ -1671,16 +1671,18 @@
 		box-sizing: border-box;
 		align-items: stretch;
 		justify-content: stretch;
-		background: #f8faff;
-		/* Remove margin/centering from .project-detail-container if present! */
+		background: transparent;
+		gap: 0.4em; /* This prevents panes from visually colliding/overlapping */
 	}
 
 	/* Left Pane */
 	.left-pane {
-		width: 300px;
-		min-width: 220px;
+		background: rgba(255, 255, 255, 0.78);
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		width: 290px;
+		min-width: 210px;
 		max-width: 340px;
-		background: #fff;
 		border-radius: 1em;
 		box-shadow: 0 2px 20px #0001;
 		display: flex;
@@ -1689,6 +1691,7 @@
 		margin: 2em 0 2em 2em;
 		height: calc(100% - 4em);
 		position: relative;
+		box-sizing: border-box;
 	}
 
 	/* Center Pane */
@@ -1699,6 +1702,7 @@
 		min-width: 0;
 		padding: 2em 0;
 		margin: 2em 0;
+		box-sizing: border-box;
 	}
 
 	/* Center Top (Toolbar) */
@@ -1721,24 +1725,20 @@
 		border-radius: 1em;
 		box-shadow: 0 2px 20px #0001;
 		padding: 2em;
+		min-width: 0;
 	}
 
 	/* Right Pane */
 	.right-pane {
-		width: 280px;
-		min-width: 160px;
-		max-width: 360px;
+		width: 250px;
+		min-width: 140px;
+		max-width: 320px;
 		margin: 2em 2em 2em 0;
-		background: transparent; /* for now */
-		/* Add a border or box-shadow in the future */
+		background: transparent;
+		/* border: 1px dashed #eee;  Uncomment to see the right pane’s border */
+		box-sizing: border-box;
 	}
 
-	.project-toolbar {
-		display: flex;
-		gap: 1.2em;
-		margin-bottom: 1.5em;
-		align-items: center;
-	}
 	.active-tab {
 		background: #1976d2;
 		color: #fff;
@@ -1937,11 +1937,14 @@
 		overscroll-behavior: contain;
 	}
 	.panel-drawer {
+		background: rgba(255, 255, 255, 0.92);
+		backdrop-filter: blur(32px);
+		-webkit-backdrop-filter: blur(32px);
+		box-shadow: 0 6px 36px #0003;
 		position: fixed;
 		top: 6em;
 		left: 50%;
 		transform: translateX(-50%);
-		background: #fff;
 		border-radius: 1em;
 		box-shadow: 0 4px 32px #0003;
 		padding: 2em;
