@@ -61,10 +61,14 @@
 	$: isCreator =
 		!!project && !!sessionValue?.user?.id && project.created_by === sessionValue.user.id;
 
-	//  Filter/Search State
-	// let statusFilter: 'all' | 'open' | 'in_progress' | 'done' = 'all';
-	// let dueFilter: 'all' | 'overdue' | 'today' | 'upcoming' | 'none' = 'all';
-	// let searchQuery = '';
+	//Prevent scrolling the background when overlay is open
+	$: {
+		if (showMembersPanel || showEditProjectPanel) {
+			document.body.style.overflow = 'hidden';
+		} else {
+			document.body.style.overflow = '';
+		}
+	}
 
 	$: filteredTasks = tasks
 		// Status filter
@@ -1455,7 +1459,7 @@
 			<!-- (empty for now) -->
 		</aside>
 
-		<!-- MEMBERS PANEL -->
+		<!-- Members panel members -->
 		{#if showMembersPanel}
 			<div
 				class="panel-overlay"
@@ -1577,6 +1581,79 @@
 							>{/if}
 					</div>
 				{/if}
+
+				<button on:click={closePanels} class="close-panel-btn">Close</button>
+			</div>
+		{/if}
+
+		<!-- Edit panel edit (only creator can see) -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		{#if showEditProjectPanel && isCreator}
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div class="panel-overlay" on:click={closePanels}></div>
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_interactive_supports_focus -->
+			<div
+				class="panel-drawer edit-drawer"
+				role="dialog"
+				aria-modal="true"
+				aria-label="Edit project"
+				on:click|stopPropagation
+			>
+				<!-- MOVE your Edit Project form here! -->
+				<h3>Edit Project</h3>
+				<form
+					on:submit|preventDefault={updateProject}
+					style="display: flex; flex-direction: column; gap: 1em; max-width: 400px;"
+				>
+					<div>
+						<label for="edit-name"><b>Name</b></label>
+						<input
+							id="edit-name"
+							type="text"
+							bind:value={editProjectName}
+							maxlength="80"
+							required
+							style="width: 100%;"
+						/>
+					</div>
+					<!-- svelte-ignore element_invalid_self_closing_tag -->
+					<div>
+						<label for="edit-desc"><b>Description</b></label>
+						<textarea
+							id="edit-desc"
+							bind:value={editProjectDesc}
+							maxlength="200"
+							rows="2"
+							style="width: 100%;"
+						/>
+					</div>
+					<div>
+						<label for="edit-deadline"><b>Deadline</b></label>
+						<input
+							id="edit-deadline"
+							type="date"
+							bind:value={editProjectDeadline}
+							style="width: 100%;"
+						/>
+					</div>
+					<div>
+						<button
+							type="submit"
+							disabled={updatingProject}
+							style="background:#1976d2;color:#fff;padding:0.5em 2em;border:none;border-radius:1em;"
+						>
+							{updatingProject ? 'Saving…' : 'Save Changes'}
+						</button>
+						{#if projectUpdateSuccess}
+							<span style="color: #080; margin-left:1em;">Project updated!</span>
+						{/if}
+						{#if projectUpdateError}
+							<span style="color: #c00; margin-left:1em;">{projectUpdateError}</span>
+						{/if}
+					</div>
+				</form>
 
 				<button on:click={closePanels} class="close-panel-btn">Close</button>
 			</div>
@@ -1854,8 +1931,10 @@
 	.panel-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.1);
+		background: rgba(0, 0, 0, 0.12);
 		z-index: 100;
+		/* Prevent background scroll: */
+		overscroll-behavior: contain;
 	}
 	.panel-drawer {
 		position: fixed;
@@ -1869,6 +1948,8 @@
 		z-index: 101;
 		min-width: 350px;
 		max-width: 90vw;
+		max-height: 90vh;
+		overflow-y: auto;
 	}
 	.close-panel-btn {
 		margin-top: 1em;
