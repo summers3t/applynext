@@ -925,6 +925,7 @@
 			{#if isCreator}
 				<button
 					class="toolbar-btn"
+					class:active-tab={showEditProjectPanel}
 					on:click={() => {
 						showEditProjectPanel = !showEditProjectPanel;
 						showMembersPanel = false;
@@ -940,6 +941,7 @@
 
 			<!-- 7. Members button -->
 			<button
+				class:active-tab={showMembersPanel}
 				class="toolbar-btn"
 				on:click={() => {
 					showMembersPanel = !showMembersPanel;
@@ -1666,33 +1668,67 @@
 	.project-page-layout {
 		display: flex;
 		flex-direction: row;
-		height: calc(100vh - 4.2em); /* account for top bar */
+		height: calc(100vh - 5.2em); /* account for top bar */
 		width: 100vw;
 		box-sizing: border-box;
 		align-items: stretch;
 		justify-content: stretch;
 		background: transparent;
-		gap: 0.4em; /* This prevents panes from visually colliding/overlapping */
+		min-height: 78vh;
+		border-radius: 2em;
+		box-shadow: 0 6px 36px 0 #0002;
+		margin: 2em auto;
+		max-width: align-self;
+		gap: 0.5em; /* This prevents panes from visually colliding/overlapping */
 	}
+
+	/* .left-pane,
+	.center-pane,
+	.right-pane {
+		border-radius: 1.2em;
+		box-shadow: 0 4px 28px 0 #0001; */
+	/* Shared glass base */
+	/* background: rgba(255, 255, 255, 0.74);
+		backdrop-filter: blur(22px) saturate(1.3);
+		-webkit-backdrop-filter: blur(22px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
+	} */
 
 	/* Left Pane */
 	.left-pane {
-		background: rgba(255, 255, 255, 0.78);
-		backdrop-filter: blur(4px);
-		-webkit-backdrop-filter: blur(4px);
-		width: 290px;
+		width: 285px;
 		min-width: 210px;
 		max-width: 340px;
-		border-radius: 1em;
-		box-shadow: 0 2px 20px #0001;
 		display: flex;
 		flex-direction: column;
-		padding: 2em 1.5em 1.5em 1.5em;
-		margin: 2em 0 2em 2em;
+		padding: 1em 1.5em 1em 1.5em;
+		margin: 1em 0 2em 1em;
 		height: calc(100% - 4em);
 		position: relative;
+		z-index: 2;
 		box-sizing: border-box;
+		/* Subtle left border glow */
+		box-shadow:
+			0 4px 28px 0 #0001,
+			-2px 0 24px #97cbff22 inset;
+		border-radius: 1.2em;
+		background: rgba(255, 255, 255, 0.74);
+		backdrop-filter: blur(4px) saturate(1.3);
+		-webkit-backdrop-filter: blur(4px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
 	}
+
+	/* .left-pane,
+	.center-pane,
+	.right-pane {
+		border-radius: 1.2em;
+		box-shadow: 0 4px 28px 0 #0001; */
+	/* Shared glass base */
+	/* background: rgba(255, 255, 255, 0.74);
+		backdrop-filter: blur(22px) saturate(1.3);
+		-webkit-backdrop-filter: blur(22px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
+	} */
 
 	/* Center Pane */
 	.center-pane {
@@ -1700,21 +1736,35 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
-		padding: 2em 0;
-		margin: 2em 0;
+		padding: 1em 0;
+		margin: 1em 0;
 		box-sizing: border-box;
+		border-radius: 1.2em;
+		box-shadow: 0 4px 28px 0 #0001;
+		background: rgba(255, 255, 255, 0.74);
+		backdrop-filter: blur(8px) saturate(1.3);
+		-webkit-backdrop-filter: blur(8px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
+		overflow: hidden;
+		z-index: 1;
 	}
 
 	/* Center Top (Toolbar) */
 	.center-top {
-		min-height: 3.5em;
-		margin-bottom: 1em;
+		min-height: 1.5em;
+		margin-bottom: 0.7;
 		position: sticky;
 		top: 0;
-		z-index: 10;
-		background: transparent;
+		z-index: 5;
+		/* background: transparent; */
 		display: flex;
 		align-items: center;
+		/* background: rgba(250, 252, 255, 0.78);
+		backdrop-filter: blur(4px); */
+		border-radius: 0.7em;
+		box-shadow: 0 15px 18px #1976d224;
+		padding: 1.1em 1.3em;
+		gap: 0.7em;
 	}
 
 	/* Center Main (Task area) */
@@ -1722,10 +1772,23 @@
 		flex: 1 1 auto;
 		overflow-y: auto;
 		background: #fff;
+		/* background: rgba(255, 255, 255, 0.38); */
 		border-radius: 1em;
-		box-shadow: 0 2px 20px #0001;
-		padding: 2em;
+		/* box-shadow: 0 2px 20px #0001;
+		padding: 2em; */
+		box-shadow: 0 1px 12px #1976d218;
+		padding: 1em 2em 0.8 0.2em;
 		min-width: 0;
+	}
+
+	.center-main::-webkit-scrollbar,
+	.panel-drawer::-webkit-scrollbar {
+		width: 9px;
+	}
+	.center-main::-webkit-scrollbar-thumb,
+	.panel-drawer::-webkit-scrollbar-thumb {
+		background: rgba(140, 160, 210, 0.18);
+		border-radius: 8px;
 	}
 
 	/* Right Pane */
@@ -1737,11 +1800,42 @@
 		background: transparent;
 		/* border: 1px dashed #eee;  Uncomment to see the right pane’s border */
 		box-sizing: border-box;
+		/* border-radius: 1.2em;
+		box-shadow: 0 4px 28px 0 #0001;
+		background: rgba(255, 255, 255, 0.74);
+		backdrop-filter: blur(22px) saturate(1.3);
+		-webkit-backdrop-filter: blur(22px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13); */
+	}
+
+	/* Toolbar and button effects */
+	.toolbar-btn,
+	.delete-project-btn,
+	.close-panel-btn {
+		box-shadow: 0 1px 8px #1976d211;
+		border-radius: 0.7em;
+		transition:
+			background 0.17s,
+			box-shadow 0.13s,
+			color 0.12s;
+	}
+	.toolbar-btn:active,
+	.delete-project-btn:active,
+	.close-panel-btn:active {
+		box-shadow: 0 1.5px 10px #2196f344;
+		transform: translateY(1.5px) scale(0.98);
+	}
+
+	/* Hover effect for rows */
+	.task-table tr:hover:not(.selected-row):not(.insert-form-row):not(.subtask-insert-row) {
+		background: rgba(25, 118, 210, 0.07);
+		transition: background 0.14s;
 	}
 
 	.active-tab {
 		background: #1976d2;
 		color: #fff;
+		box-shadow: 0 2px 8px #1976d288;
 	}
 
 	.nav-btn {
@@ -1810,6 +1904,7 @@
 		gap: 0.5em;
 		margin-bottom: 0.8em;
 		align-items: center;
+		gap: 1em;
 	}
 	.toolbar-btn {
 		padding: 0.3em 1.1em;
@@ -1885,6 +1980,8 @@
 		border: 2px solid #aaa;
 		box-sizing: border-box;
 		background: #fff;
+		border: 2px solid rgba(40, 100, 200, 0.18);
+		box-shadow: 0 0 6px #1976d233;
 	}
 	.selected-row {
 		background: #e3f4fc !important;
@@ -1933,26 +2030,34 @@
 		inset: 0;
 		background: rgba(0, 0, 0, 0.12);
 		z-index: 100;
+		background: rgba(0, 28, 50, 0.12);
+		backdrop-filter: blur(5px);
+		-webkit-backdrop-filter: blur(5px);
 		/* Prevent background scroll: */
 		overscroll-behavior: contain;
 	}
 	.panel-drawer {
-		background: rgba(255, 255, 255, 0.92);
-		backdrop-filter: blur(32px);
-		-webkit-backdrop-filter: blur(32px);
-		box-shadow: 0 6px 36px #0003;
+		background: rgba(255, 255, 255, 0.94);
+		backdrop-filter: blur(28px) saturate(1.2);
+		-webkit-backdrop-filter: blur(28px) saturate(1.2);
+		box-shadow:
+			0 6px 36px #1676d344,
+			0 1.5px 8px #ffffff44 inset;
 		position: fixed;
 		top: 6em;
 		left: 50%;
 		transform: translateX(-50%);
-		border-radius: 1em;
-		box-shadow: 0 4px 32px #0003;
+		border-radius: 1.4em;
+		border: 2px solid rgba(180, 200, 230, 0.17);
 		padding: 2em;
 		z-index: 101;
 		min-width: 350px;
 		max-width: 90vw;
 		max-height: 90vh;
 		overflow-y: auto;
+		transition:
+			box-shadow 0.22s,
+			background 0.22s;
 	}
 	.close-panel-btn {
 		margin-top: 1em;
