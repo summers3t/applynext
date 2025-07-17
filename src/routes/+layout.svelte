@@ -6,7 +6,7 @@
 	import { session } from '$lib/session';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 
 	// Svelte store auto-subscription
@@ -63,7 +63,7 @@
 
 	$: if ($session?.user) claimInvitations();
 
-	$: if ($session?.user && $page.url.pathname === '/') {
+	$: if ($session?.user && page.url.pathname === '/') {
 		goto('/projects');
 	}
 </script>
@@ -75,7 +75,7 @@
 	</div>
 
 	<!-- Center: Filter/Search Bar (conditionally rendered) -->
-	{#if $session?.user && $page.url.pathname.startsWith('/projects/')}
+	{#if $session?.user && page.url.pathname.startsWith('/projects/')}
 		<div class="center">
 			<!-- Filters & Search bar -->
 			<div

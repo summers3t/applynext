@@ -888,772 +888,770 @@
 	}
 </script>
 
-<!-- Main page layout main -->
 <div class="project-page-layout">
 	{#if loadingProject}
 		<p>Loading project...</p>
 	{:else if errorProject}
 		<p style="color:red;">{errorProject}</p>
 	{:else if project}
-		<!-- Left side pane left -->
+		<!-- Left side pane -->
 		<aside class="left-pane">
-			<!-- 1. Back button -->
-			<button class="nav-btn" on:click={() => goto('/projects')}>← All Projects</button>
-
-			<!-- 2. Project name -->
-			<h2 style="margin:1.2em 0 0.5em 0;">{project.name}</h2>
-
-			<!-- 3. Project description -->
-			<div class="desc">{project.description}</div>
-
-			<!-- 4. Deadline -->
-			<div class="deadline">
-				<b>Deadline:</b>
-				{project.deadline ? formatDate(project.deadline) : '—'}
-			</div>
-
-			<!-- 5. Role -->
-			<div class="role-row">
-				<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
-			</div>
-
-			<!-- 6. Edit Project button -->
-			{#if isCreator}
-				<button
-					class="toolbar-btn"
-					on:click={() => {
-						showEditProjectPanel = !showEditProjectPanel;
-						showMembersPanel = false;
-						if (showEditProjectPanel && project) {
-							editProjectName = project.name;
-							editProjectDesc = project.description ?? '';
-							editProjectDeadline = project.deadline ?? null;
-						}
-					}}
-					style="width:100%; margin:1.3em 0 0.7em 0;">✏️ Edit Project</button
-				>
-			{/if}
-
-			<!-- 7. Members button -->
-			<button
-				class="toolbar-btn"
-				on:click={() => {
-					showMembersPanel = !showMembersPanel;
-					showEditProjectPanel = false;
-				}}
-				style="width:100%; margin-bottom:2em;">👥 Members</button
-			>
-
-			<!-- 8. Delete Project button at the bottom -->
-			<div style="flex:1"></div>
-			<!-- pushes delete button to the bottom -->
-			{#if myRole === 'admin' || isCreator}
-				<button
-					class="delete-project-btn"
-					on:click={handleDeleteProject}
-					disabled={deletingProject}
-					style="width:100%; margin-top:auto;">🗑️ Delete Project</button
-				>
-			{/if}
+			<!-- Will move left-side controls here in Step 1b -->
 		</aside>
 
-		<!-- Center and center top panes -->
+		<!-- Center top and center panes -->
 		<div class="center-pane">
 			<div class="center-top">
-				<div class="action-toolbar">
-					<button
-						class="toolbar-btn"
-						on:click={handleInsertClick}
-						disabled={!canEditTasks() ||
-							!selected ||
-							(selected.type === 'task' && editingTaskId !== null) ||
-							(selected.type === 'subtask' && editingSubtaskId !== null)}
-					>
-						Insert
-					</button>
-
-					<button
-						class="toolbar-btn"
-						on:click={handleAddSubtaskClick}
-						disabled={!canEditTasks() ||
-							!selected ||
-							selected.type !== 'task' ||
-							editingTaskId !== null ||
-							editingSubtaskId !== null}
-					>
-						Add Subtask
-					</button>
-
-					<button
-						class="toolbar-btn"
-						on:click={handleMoveUpClick}
-						disabled={!canEditTasks() ||
-							!selected ||
-							(selected?.type === 'task' &&
-								(editingTaskId !== null ||
-									filteredTasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
-							(selected?.type === 'subtask' &&
-								(editingSubtaskId !== null ||
-									!selected?.parentTaskId ||
-									(() => {
-										const task = tasks.find((t) => t.id === selected?.parentTaskId);
-										if (!task) return true;
-										return task.subtasks.findIndex((st) => st.id === selected?.id) <= 0;
-									})()))}
-					>
-						↑
-					</button>
-
-					<button
-						class="toolbar-btn"
-						on:click={() =>
-							selected && selected.type === 'task'
-								? moveSelectedTask(1)
-								: selected && selected.type === 'subtask'
-									? moveSelectedSubtask(1)
-									: undefined}
-						disabled={!canEditTasks() ||
-							!selected ||
-							(selected?.type === 'task' &&
-								(editingTaskId !== null ||
-									filteredTasks.findIndex((t) => t.id === selected?.id) ===
-										filteredTasks.length - 1)) ||
-							(selected?.type === 'subtask' &&
-								(editingSubtaskId !== null ||
-									!selected?.parentTaskId ||
-									(() => {
-										const task = tasks.find((t) => t.id === selected?.parentTaskId);
-										if (!task) return true;
-										return (
-											task.subtasks.findIndex((st) => st.id === selected?.id) ===
-											task.subtasks.length - 1
-										);
-									})()))}
-					>
-						↓
-					</button>
-
-					<button
-						class="toolbar-btn"
-						on:click={startEdit}
-						disabled={!canEditTasks() ||
-							!selected ||
-							(selected.type === 'task' && editingTaskId !== null) ||
-							(selected.type === 'subtask' && editingSubtaskId !== null)}
-					>
-						Edit
-					</button>
-
-					<button
-						class="toolbar-btn delete-btn"
-						on:click={deleteSelected}
-						disabled={!canEditTasks() ||
-							!selected ||
-							(selected.type === 'task' && editingTaskId !== null) ||
-							(selected.type === 'subtask' && editingSubtaskId !== null)}
-					>
-						Delete
-					</button>
-				</div>
+				<!-- Will move action toolbar here in Step 1b -->
 			</div>
-
 			<div class="center-main">
-				<!-- For next step: Move task/subtask table here -->
-				{#if loadingTasks}
-					<p>Loading tasks…</p>
-				{:else if errorTasks}
-					<p style="color:red;">{errorTasks}</p>
-				{:else if tasks.length === 0}
-					<!-- NEW: Add First Task UI when no tasks exist -->
-					<div style="margin:2em 0;">
-						<button
-							class="toolbar-btn"
-							on:click={() => (insertingAtIndex = 0)}
-							disabled={!canEditTasks() || editingTaskId !== null}
-						>
-							Add First Task
-						</button>
-						{#if insertingAtIndex === 0}
-							<form on:submit|preventDefault={() => createTask(0)} style="margin-top:1em;">
-								<input
-									type="text"
-									placeholder="Task title"
-									bind:value={newTitle}
-									required
-									style="margin-right:0.5em; width:25%;"
-								/>
-								<input
-									type="text"
-									placeholder="Description (optional)"
-									bind:value={newDescription}
-									style="margin-right:0.5em; width:35%;"
-								/>
-								<select bind:value={newStatus} style="margin-right:0.5em;">
-									<option value="open">Open</option>
-									<option value="in_progress">In Progress</option>
-									<option value="done">Done</option>
-								</select>
-								<input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
-								{#if newDueDate}
-									<button
-										type="button"
-										on:click={() => (newDueDate = null)}
-										style="margin-right:0.3em;">❌</button
-									>
-								{/if}
-								<button type="submit" disabled={creating || !newTitle.trim()}>
-									{creating ? 'Adding…' : 'Insert Task'}
-								</button>
-								<button type="button" on:click={() => (insertingAtIndex = null)}>Cancel</button>
-							</form>
-						{/if}
-					</div>
-				{:else}
-					<table class="task-table">
+				<!-- Will move task/subtask table/list here in Step 1b -->
+			</div>
+		</div>
+
+		<!-- Right side pane -->
+		<aside class="right-pane">
+			<!-- Empty for now -->
+		</aside>
+
+		<!-- Project Top Navigation Buttons -->
+		<div
+			class="project-header-buttons"
+			style="display:flex; align-items:center; gap:1em; margin-bottom:1.5em;"
+		>
+			<div class="project-toolbar">
+				<button class="nav-btn" on:click={() => goto('/projects')}>← All Projects</button>
+
+				<button
+					class:active-tab={showMembersPanel}
+					class="toolbar-btn"
+					on:click={() => {
+						showMembersPanel = !showMembersPanel;
+						showEditProjectPanel = false;
+					}}
+				>
+					👥 Members
+				</button>
+
+				{#if isCreator}
+					<button
+						class:active-tab={showEditProjectPanel}
+						class="toolbar-btn"
+						on:click={() => {
+							showEditProjectPanel = !showEditProjectPanel;
+							showMembersPanel = false;
+							if (showEditProjectPanel && project) {
+								// Prefill form fields with current project values
+								editProjectName = project.name;
+								editProjectDesc = project.description ?? '';
+								editProjectDeadline = project.deadline ?? null;
+							}
+						}}
+					>
+						✏️ Edit Project
+					</button>
+				{/if}
+
+				{#if myRole === 'admin' || isCreator}
+					<button
+						class="delete-project-btn"
+						on:click={handleDeleteProject}
+						disabled={deletingProject}
+					>
+						🗑️ Delete Project
+					</button>
+				{/if}
+			</div>
+			<!-- MEMBERS PANEL -->
+			{#if showMembersPanel}
+				<div
+					class="panel-overlay"
+					role="button"
+					tabindex="0"
+					aria-label="Close panel"
+					on:click={closePanels}
+					on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && closePanels()}
+				></div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<!-- svelte-ignore a11y_interactive_supports_focus -->
+				<div
+					class="panel-drawer members-drawer"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Project members"
+					on:click|stopPropagation
+				>
+					<h3>Members</h3>
+					{#if updateRoleError}
+						<div style="color:#c00;">{updateRoleError}</div>
+					{/if}
+					{#if removeError}
+						<div style="color:#c00;">{removeError}</div>
+					{/if}
+					<table>
 						<thead>
 							<tr>
-								<th style="width:3em;"></th>
-								<th style="width:2em;"></th>
-								<th style="width:32%;">Task</th>
-								<th style="width:26%;">Description / Subtask</th>
-								<th style="width:18%;">Created by</th>
-								<th class="date-cell">Due Date</th>
+								<th>Email</th>
+								<th>Role</th>
+								<th>Status</th>
+								{#if myRole === 'admin'}
+									<th>Remove</th>
+								{/if}
 							</tr>
 						</thead>
 						<tbody>
-							{#each filteredTasks as task, i}
-								<!-- TASK ROW -->
-								<tr
-									class:selected-row={selected &&
-										selected.type === 'task' &&
-										selected.id === task.id}
-									style="cursor:pointer;"
-									on:click={() => selectTask(task.id)}
-								>
+							{#each members as m}
+								<tr>
 									<td>
-										{#if task.subtasks.length > 0}
-											<button
-												class="expander"
-												on:click|stopPropagation={() => toggleExpand(task.id)}
-												aria-label={expandedTasks.has(task.id)
-													? 'Collapse subtasks'
-													: 'Expand subtasks'}
+										{m.email}
+									</td>
+									<td>
+										{#if myRole === 'admin' && m.user_id !== sessionValue?.user.id}
+											<select
+												bind:value={m.role}
+												on:change={(e) =>
+													updateMemberRole(
+														m.user_id || '',
+														(e.target as HTMLSelectElement).value,
+														m.invited_email ? m.invited_email : undefined
+													)}
+												disabled={updatingRoleUserId === (m.user_id || m.invited_email)}
 											>
-												{expandedTasks.has(task.id) ? '➖' : '➕'}
-											</button>
+												{#if isCreator}
+													<option value="admin">Admin</option>
+												{/if}
+												<option value="editor">Editor</option>
+												<option value="viewer">Viewer</option>
+											</select>
+										{:else}
+											{m.role}
 										{/if}
 									</td>
+									<td>
+										{m.status}
+									</td>
+									{#if myRole === 'admin'}
+										<td>
+											{#if (m.user_id && m.user_id !== sessionValue?.user.id) || (!m.user_id && m.invited_email)}
+												<button
+													on:click={() =>
+														removeMember(m.user_id || undefined, m.invited_email || undefined)}
+													disabled={removingUserId === (m.user_id || m.invited_email)}
+													style="color:#fff; background:#e74c3c; border:none; padding:0.3em 1.1em; border-radius:0.5em; cursor:pointer;"
+												>
+													{removingUserId === (m.user_id || m.invited_email)
+														? 'Removing…'
+														: 'Remove'}
+												</button>
+											{/if}
+										</td>
+									{/if}
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+					{#if myRole === 'admin'}
+						<div class="invite-container">
+							<h4>Invite a member</h4>
+							<form
+								on:submit|preventDefault={inviteMember}
+								style="display:flex; gap:0.7em; align-items:center;"
+							>
+								<input
+									type="email"
+									placeholder="Email"
+									bind:value={inviteEmail}
+									required
+									style="min-width:17em;"
+								/>
+								<select bind:value={inviteRole}>
+									{#if isCreator}
+										<option value="admin">Admin</option>
+									{/if}
+									<option value="editor">Editor</option>
+									<option value="viewer">Viewer</option>
+								</select>
+
+								{#if !isCreator}
+									<div style="color:#888; font-size:0.98em; margin-bottom:0.5em;">
+										Only the project creator can assign admin rights.
+									</div>
+								{/if}
+
+								<button type="submit" disabled={inviting || !inviteEmail.trim()}>Invite</button>
+							</form>
+							{#if inviteError}<span style="color:#c00; margin-left:0.7em;">{inviteError}</span
+								>{/if}
+							{#if inviteSuccess}<span style="color:#080; margin-left:0.7em;">{inviteSuccess}</span
+								>{/if}
+						</div>
+					{/if}
+
+					<button on:click={closePanels} class="close-panel-btn">Close</button>
+				</div>
+			{/if}
+
+			<!-- EDIT PROJECT PANEL (only creator can see) -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			{#if showEditProjectPanel && isCreator}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="panel-overlay" on:click={closePanels}></div>
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_interactive_supports_focus -->
+				<div
+					class="panel-drawer edit-drawer"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Edit project"
+					on:click|stopPropagation
+				>
+					<!-- MOVE your Edit Project form here! -->
+					<h3>Edit Project</h3>
+					<form
+						on:submit|preventDefault={updateProject}
+						style="display: flex; flex-direction: column; gap: 1em; max-width: 400px;"
+					>
+						<div>
+							<label for="edit-name"><b>Name</b></label>
+							<input
+								id="edit-name"
+								type="text"
+								bind:value={editProjectName}
+								maxlength="80"
+								required
+								style="width: 100%;"
+							/>
+						</div>
+						<!-- svelte-ignore element_invalid_self_closing_tag -->
+						<div>
+							<label for="edit-desc"><b>Description</b></label>
+							<textarea
+								id="edit-desc"
+								bind:value={editProjectDesc}
+								maxlength="200"
+								rows="2"
+								style="width: 100%;"
+							/>
+						</div>
+						<div>
+							<label for="edit-deadline"><b>Deadline</b></label>
+							<input
+								id="edit-deadline"
+								type="date"
+								bind:value={editProjectDeadline}
+								style="width: 100%;"
+							/>
+						</div>
+						<div>
+							<button
+								type="submit"
+								disabled={updatingProject}
+								style="background:#1976d2;color:#fff;padding:0.5em 2em;border:none;border-radius:1em;"
+							>
+								{updatingProject ? 'Saving…' : 'Save Changes'}
+							</button>
+							{#if projectUpdateSuccess}
+								<span style="color: #080; margin-left:1em;">Project updated!</span>
+							{/if}
+							{#if projectUpdateError}
+								<span style="color: #c00; margin-left:1em;">{projectUpdateError}</span>
+							{/if}
+						</div>
+					</form>
+
+					<button on:click={closePanels} class="close-panel-btn">Close</button>
+				</div>
+			{/if}
+		</div>
+
+		<h2>{project.name}</h2>
+		<p>{project.description}</p>
+		<p>
+			<b>Deadline:</b>
+			{project.deadline ? formatDate(project.deadline) : '—'}
+			<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
+		</p>
+
+		<!-- TASK MANAGEMENT SECTION (Project Scoped) -->
+		<h3 style="margin-top:2em;">Project Tasks</h3>
+		{#if loadingTasks}
+			<p>Loading tasks…</p>
+		{:else if errorTasks}
+			<p style="color:red;">{errorTasks}</p>
+		{:else if tasks.length === 0}
+			<!-- NEW: Add First Task UI when no tasks exist -->
+			<div style="margin:2em 0;">
+				<button
+					class="toolbar-btn"
+					on:click={() => (insertingAtIndex = 0)}
+					disabled={!canEditTasks() || editingTaskId !== null}
+				>
+					Add First Task
+				</button>
+				{#if insertingAtIndex === 0}
+					<form on:submit|preventDefault={() => createTask(0)} style="margin-top:1em;">
+						<input
+							type="text"
+							placeholder="Task title"
+							bind:value={newTitle}
+							required
+							style="margin-right:0.5em; width:25%;"
+						/>
+						<input
+							type="text"
+							placeholder="Description (optional)"
+							bind:value={newDescription}
+							style="margin-right:0.5em; width:35%;"
+						/>
+						<select bind:value={newStatus} style="margin-right:0.5em;">
+							<option value="open">Open</option>
+							<option value="in_progress">In Progress</option>
+							<option value="done">Done</option>
+						</select>
+						<input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
+						{#if newDueDate}
+							<button type="button" on:click={() => (newDueDate = null)} style="margin-right:0.3em;"
+								>❌</button
+							>
+						{/if}
+						<button type="submit" disabled={creating || !newTitle.trim()}>
+							{creating ? 'Adding…' : 'Insert Task'}
+						</button>
+						<button type="button" on:click={() => (insertingAtIndex = null)}>Cancel</button>
+					</form>
+				{/if}
+			</div>
+		{:else}
+			<div class="action-toolbar">
+				<button
+					class="toolbar-btn"
+					on:click={handleInsertClick}
+					disabled={!canEditTasks() ||
+						!selected ||
+						(selected.type === 'task' && editingTaskId !== null) ||
+						(selected.type === 'subtask' && editingSubtaskId !== null)}
+				>
+					Insert
+				</button>
+
+				<button
+					class="toolbar-btn"
+					on:click={handleAddSubtaskClick}
+					disabled={!canEditTasks() ||
+						!selected ||
+						selected.type !== 'task' ||
+						editingTaskId !== null ||
+						editingSubtaskId !== null}
+				>
+					Add Subtask
+				</button>
+
+				<button
+					class="toolbar-btn"
+					on:click={handleMoveUpClick}
+					disabled={!canEditTasks() ||
+						!selected ||
+						(selected?.type === 'task' &&
+							(editingTaskId !== null ||
+								filteredTasks.findIndex((t) => t.id === selected?.id) <= 0)) ||
+						(selected?.type === 'subtask' &&
+							(editingSubtaskId !== null ||
+								!selected?.parentTaskId ||
+								(() => {
+									const task = tasks.find((t) => t.id === selected?.parentTaskId);
+									if (!task) return true;
+									return task.subtasks.findIndex((st) => st.id === selected?.id) <= 0;
+								})()))}
+				>
+					↑
+				</button>
+
+				<button
+					class="toolbar-btn"
+					on:click={() =>
+						selected && selected.type === 'task'
+							? moveSelectedTask(1)
+							: selected && selected.type === 'subtask'
+								? moveSelectedSubtask(1)
+								: undefined}
+					disabled={!canEditTasks() ||
+						!selected ||
+						(selected?.type === 'task' &&
+							(editingTaskId !== null ||
+								filteredTasks.findIndex((t) => t.id === selected?.id) ===
+									filteredTasks.length - 1)) ||
+						(selected?.type === 'subtask' &&
+							(editingSubtaskId !== null ||
+								!selected?.parentTaskId ||
+								(() => {
+									const task = tasks.find((t) => t.id === selected?.parentTaskId);
+									if (!task) return true;
+									return (
+										task.subtasks.findIndex((st) => st.id === selected?.id) ===
+										task.subtasks.length - 1
+									);
+								})()))}
+				>
+					↓
+				</button>
+
+				<button
+					class="toolbar-btn"
+					on:click={startEdit}
+					disabled={!canEditTasks() ||
+						!selected ||
+						(selected.type === 'task' && editingTaskId !== null) ||
+						(selected.type === 'subtask' && editingSubtaskId !== null)}>Edit</button
+				>
+				<button
+					class="toolbar-btn delete-btn"
+					on:click={deleteSelected}
+					disabled={!canEditTasks() ||
+						!selected ||
+						(selected.type === 'task' && editingTaskId !== null) ||
+						(selected.type === 'subtask' && editingSubtaskId !== null)}>Delete</button
+				>
+			</div>
+
+			<table class="task-table">
+				<thead>
+					<tr>
+						<th style="width:3em;"></th>
+						<th style="width:2em;"></th>
+						<th style="width:32%;">Task</th>
+						<th style="width:26%;">Description / Subtask</th>
+						<th style="width:18%;">Created by</th>
+						<th class="date-cell">Due Date</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each filteredTasks as task, i}
+						<!-- TASK ROW -->
+						<tr
+							class:selected-row={selected && selected.type === 'task' && selected.id === task.id}
+							style="cursor:pointer;"
+							on:click={() => selectTask(task.id)}
+						>
+							<td>
+								{#if task.subtasks.length > 0}
+									<button
+										class="expander"
+										on:click|stopPropagation={() => toggleExpand(task.id)}
+										aria-label={expandedTasks.has(task.id)
+											? 'Collapse subtasks'
+											: 'Expand subtasks'}
+									>
+										{expandedTasks.has(task.id) ? '➖' : '➕'}
+									</button>
+								{/if}
+							</td>
+							<td>
+								<span
+									class="status-dot"
+									style="background:{statusDotColor(
+										task.status,
+										isOverdue(task.due_date, task.status)
+									)};
+                  border-color:{isOverdue(task.due_date, task.status) ? overdueColor : '#aaa'};"
+									title={task.status === 'done'
+										? 'Done'
+										: isOverdue(task.due_date, task.status)
+											? 'Overdue'
+											: task.status === 'open'
+												? 'Open'
+												: 'In Progress'}
+								></span>
+							</td>
+							{#if editingTaskId === task.id}
+								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+								<td colspan="4" class="edit-form-row">
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<form
+										on:submit|preventDefault={saveEditTask}
+										on:click|stopPropagation
+										style="display:flex;align-items:center;gap:0.7em;"
+									>
+										<input type="text" bind:value={editTitle} required style="width:28%;" />
+										<input
+											type="text"
+											bind:value={editDescription}
+											placeholder="Description (optional)"
+											style="width:38%;"
+										/>
+										<select bind:value={editStatus}>
+											<option value="open">Open</option>
+											<option value="in_progress">In Progress</option>
+											<option value="done">Done</option>
+										</select>
+										<input type="date" bind:value={editDueDate} style="width:25%;" />
+										{#if editDueDate}
+											<button
+												type="button"
+												on:click={() => (editDueDate = null)}
+												style="margin-right:0.3em;">❌</button
+											>
+										{/if}
+										<button type="submit" disabled={savingEdit || !editTitle.trim()}>Save</button>
+										<button type="button" on:click={cancelEdit} disabled={savingEdit}>Cancel</button
+										>
+									</form>
+								</td>
+							{:else}
+								<td>{task.title}</td>
+								<td>{task.description}</td>
+								<td class="created-by">
+									{#if task.created_by_email}
+										{#if task.created_by_email === sessionValue?.user?.email}
+											You
+										{:else}
+											<span title={task.created_by_email}>{getInitials(task.created_by_email)}</span
+											>
+										{/if}
+									{:else}
+										—
+									{/if}
+								</td>
+								<td class="date-cell">
+									{#if task.due_date}
+										{formatDate(task.due_date)}
+									{/if}
+								</td>
+							{/if}
+						</tr>
+
+						<!-- Insert form row (Task) -->
+						{#if insertingAtIndex === i}
+							<tr class="insert-form-row">
+								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+								<td colspan="5">
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<form
+										on:submit|preventDefault={() => createTask(filteredIndexToTasksIndex(i))}
+										on:click|stopPropagation
+									>
+										<input
+											type="text"
+											placeholder="Task title"
+											bind:value={newTitle}
+											required
+											style="margin-right:0.5em; width:25%;"
+										/>
+										<input
+											type="text"
+											placeholder="Description (optional)"
+											bind:value={newDescription}
+											style="margin-right:0.5em; width:35%;"
+										/>
+										<select bind:value={newStatus} style="margin-right:0.5em;">
+											<option value="open">Open</option>
+											<option value="in_progress">In Progress</option>
+											<option value="done">Done</option>
+										</select>
+										<input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
+										{#if newDueDate}
+											<button
+												type="button"
+												on:click={() => (newDueDate = null)}
+												style="margin-right:0.3em;">❌</button
+											>
+										{/if}
+										<button type="submit" disabled={creating || !newTitle.trim()}>
+											{creating ? 'Adding…' : 'Insert Task'}
+										</button>
+										<button type="button" on:click={() => (insertingAtIndex = null)}>Cancel</button>
+									</form>
+								</td>
+							</tr>
+						{/if}
+
+						<!-- SUBTASK ROWS (only if expanded) -->
+						{#if expandedTasks.has(task.id)}
+							{#each task.subtasks as subtask, stIdx}
+								<tr
+									class:selected-row={selected &&
+										selected.type === 'subtask' &&
+										selected.id === subtask.id}
+									class="subtask-row"
+									style="cursor:pointer;"
+									on:click={() => selectSubtask(subtask.id, task.id)}
+								>
+									<td><span class="subtask-indent"></span></td>
 									<td>
 										<span
 											class="status-dot"
 											style="background:{statusDotColor(
-												task.status,
-												isOverdue(task.due_date, task.status)
+												subtask.status,
+												isOverdue(subtask.due_date, subtask.status)
 											)};
-                  border-color:{isOverdue(task.due_date, task.status) ? overdueColor : '#aaa'};"
-											title={task.status === 'done'
+                      border-color:{isOverdue(subtask.due_date, subtask.status)
+												? overdueColor
+												: '#aaa'};"
+											title={subtask.status === 'done'
 												? 'Done'
-												: isOverdue(task.due_date, task.status)
+												: isOverdue(subtask.due_date, subtask.status)
 													? 'Overdue'
-													: task.status === 'open'
+													: subtask.status === 'open'
 														? 'Open'
 														: 'In Progress'}
 										></span>
 									</td>
-									{#if editingTaskId === task.id}
+									{#if editingSubtaskId === subtask.id}
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-										<td colspan="4" class="edit-form-row">
+										<td colspan="3" class="subtask-edit-row">
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<form
-												on:submit|preventDefault={saveEditTask}
+												on:submit|preventDefault={saveEditSubtask}
 												on:click|stopPropagation
 												style="display:flex;align-items:center;gap:0.7em;"
 											>
-												<input type="text" bind:value={editTitle} required style="width:28%;" />
 												<input
 													type="text"
-													bind:value={editDescription}
-													placeholder="Description (optional)"
+													bind:value={editSubtaskContent}
+													required
 													style="width:38%;"
 												/>
-												<select bind:value={editStatus}>
+												<select bind:value={editSubtaskStatus}>
 													<option value="open">Open</option>
 													<option value="in_progress">In Progress</option>
 													<option value="done">Done</option>
 												</select>
-												<input type="date" bind:value={editDueDate} style="width:25%;" />
-												{#if editDueDate}
+												<input type="date" bind:value={editSubtaskDueDate} style="width:25%;" />
+												{#if editSubtaskDueDate}
 													<button
 														type="button"
-														on:click={() => (editDueDate = null)}
+														on:click={() => (editSubtaskDueDate = null)}
 														style="margin-right:0.3em;">❌</button
 													>
 												{/if}
-												<button type="submit" disabled={savingEdit || !editTitle.trim()}
-													>Save</button
+												<button
+													type="submit"
+													disabled={savingSubtaskEdit || !editSubtaskContent.trim()}>Save</button
 												>
-												<button type="button" on:click={cancelEdit} disabled={savingEdit}
+												<button type="button" on:click={cancelEdit} disabled={savingSubtaskEdit}
 													>Cancel</button
 												>
 											</form>
 										</td>
 									{:else}
-										<td>{task.title}</td>
-										<td>{task.description}</td>
-										<td class="created-by">
-											{#if task.created_by_email}
-												{#if task.created_by_email === sessionValue?.user?.email}
-													You
-												{:else}
-													<span title={task.created_by_email}
-														>{getInitials(task.created_by_email)}</span
-													>
-												{/if}
-											{:else}
-												—
-											{/if}
-										</td>
+										<td></td>
+										<td>{subtask.content}</td>
 										<td class="date-cell">
-											{#if task.due_date}
-												{formatDate(task.due_date)}
+											{#if subtask.due_date}
+												{formatDate(subtask.due_date)}
 											{/if}
 										</td>
 									{/if}
 								</tr>
-
-								<!-- Insert form row (Task) -->
-								{#if insertingAtIndex === i}
-									<tr class="insert-form-row">
+								<!-- Insert form row (Subtask) -->
+								{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && insertingSubtaskAt.index === stIdx}
+									<tr class="subtask-insert-row">
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 										<td colspan="5">
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<form
-												on:submit|preventDefault={() => createTask(filteredIndexToTasksIndex(i))}
+												on:submit|preventDefault={() => createSubtask(task.id, stIdx)}
 												on:click|stopPropagation
 											>
 												<input
 													type="text"
-													placeholder="Task title"
-													bind:value={newTitle}
+													placeholder="Subtask content"
+													bind:value={newSubtaskContent}
 													required
-													style="margin-right:0.5em; width:25%;"
+													style="margin-right:0.5em; width:32%;"
 												/>
-												<input
-													type="text"
-													placeholder="Description (optional)"
-													bind:value={newDescription}
-													style="margin-right:0.5em; width:35%;"
-												/>
-												<select bind:value={newStatus} style="margin-right:0.5em;">
+												<select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
 													<option value="open">Open</option>
 													<option value="in_progress">In Progress</option>
 													<option value="done">Done</option>
 												</select>
-												<input type="date" bind:value={newDueDate} style="margin-right:0.5em;" />
-												{#if newDueDate}
+												<input
+													type="date"
+													bind:value={newSubtaskDueDate}
+													style="margin-right:0.5em;"
+												/>
+												{#if newSubtaskDueDate}
 													<button
 														type="button"
-														on:click={() => (newDueDate = null)}
+														on:click={() => (newSubtaskDueDate = null)}
 														style="margin-right:0.3em;">❌</button
 													>
 												{/if}
-												<button type="submit" disabled={creating || !newTitle.trim()}>
-													{creating ? 'Adding…' : 'Insert Task'}
+												<button
+													type="submit"
+													disabled={creatingSubtask || !newSubtaskContent.trim()}
+												>
+													{creatingSubtask ? 'Adding…' : 'Insert Subtask'}
 												</button>
-												<button type="button" on:click={() => (insertingAtIndex = null)}
+												<button type="button" on:click={() => (insertingSubtaskAt = null)}
 													>Cancel</button
 												>
 											</form>
 										</td>
 									</tr>
 								{/if}
-
-								<!-- SUBTASK ROWS (only if expanded) -->
-								{#if expandedTasks.has(task.id)}
-									{#each task.subtasks as subtask, stIdx}
-										<tr
-											class:selected-row={selected &&
-												selected.type === 'subtask' &&
-												selected.id === subtask.id}
-											class="subtask-row"
-											style="cursor:pointer;"
-											on:click={() => selectSubtask(subtask.id, task.id)}
-										>
-											<td><span class="subtask-indent"></span></td>
-											<td>
-												<span
-													class="status-dot"
-													style="background:{statusDotColor(
-														subtask.status,
-														isOverdue(subtask.due_date, subtask.status)
-													)};
-                      border-color:{isOverdue(subtask.due_date, subtask.status)
-														? overdueColor
-														: '#aaa'};"
-													title={subtask.status === 'done'
-														? 'Done'
-														: isOverdue(subtask.due_date, subtask.status)
-															? 'Overdue'
-															: subtask.status === 'open'
-																? 'Open'
-																: 'In Progress'}
-												></span>
-											</td>
-											{#if editingSubtaskId === subtask.id}
-												<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-												<td colspan="3" class="subtask-edit-row">
-													<!-- svelte-ignore a11y_click_events_have_key_events -->
-													<form
-														on:submit|preventDefault={saveEditSubtask}
-														on:click|stopPropagation
-														style="display:flex;align-items:center;gap:0.7em;"
-													>
-														<input
-															type="text"
-															bind:value={editSubtaskContent}
-															required
-															style="width:38%;"
-														/>
-														<select bind:value={editSubtaskStatus}>
-															<option value="open">Open</option>
-															<option value="in_progress">In Progress</option>
-															<option value="done">Done</option>
-														</select>
-														<input type="date" bind:value={editSubtaskDueDate} style="width:25%;" />
-														{#if editSubtaskDueDate}
-															<button
-																type="button"
-																on:click={() => (editSubtaskDueDate = null)}
-																style="margin-right:0.3em;">❌</button
-															>
-														{/if}
-														<button
-															type="submit"
-															disabled={savingSubtaskEdit || !editSubtaskContent.trim()}
-															>Save</button
-														>
-														<button type="button" on:click={cancelEdit} disabled={savingSubtaskEdit}
-															>Cancel</button
-														>
-													</form>
-												</td>
-											{:else}
-												<td></td>
-												<td>{subtask.content}</td>
-												<td class="date-cell">
-													{#if subtask.due_date}
-														{formatDate(subtask.due_date)}
-													{/if}
-												</td>
-											{/if}
-										</tr>
-										<!-- Insert form row (Subtask) -->
-										{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && insertingSubtaskAt.index === stIdx}
-											<tr class="subtask-insert-row">
-												<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-												<td colspan="5">
-													<!-- svelte-ignore a11y_click_events_have_key_events -->
-													<form
-														on:submit|preventDefault={() => createSubtask(task.id, stIdx)}
-														on:click|stopPropagation
-													>
-														<input
-															type="text"
-															placeholder="Subtask content"
-															bind:value={newSubtaskContent}
-															required
-															style="margin-right:0.5em; width:32%;"
-														/>
-														<select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
-															<option value="open">Open</option>
-															<option value="in_progress">In Progress</option>
-															<option value="done">Done</option>
-														</select>
-														<input
-															type="date"
-															bind:value={newSubtaskDueDate}
-															style="margin-right:0.5em;"
-														/>
-														{#if newSubtaskDueDate}
-															<button
-																type="button"
-																on:click={() => (newSubtaskDueDate = null)}
-																style="margin-right:0.3em;">❌</button
-															>
-														{/if}
-														<button
-															type="submit"
-															disabled={creatingSubtask || !newSubtaskContent.trim()}
-														>
-															{creatingSubtask ? 'Adding…' : 'Insert Subtask'}
-														</button>
-														<button type="button" on:click={() => (insertingSubtaskAt = null)}
-															>Cancel</button
-														>
-													</form>
-												</td>
-											</tr>
-										{/if}
-									{/each}
-									{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
-										<tr class="subtask-insert-row">
-											<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-											<td colspan="5">
-												<!-- svelte-ignore a11y_click_events_have_key_events -->
-												<form
-													on:submit|preventDefault={() =>
-														createSubtask(task.id, task.subtasks.length - 1)}
-													on:click|stopPropagation
-												>
-													<input
-														type="text"
-														placeholder="Subtask content"
-														bind:value={newSubtaskContent}
-														required
-														style="margin-right:0.5em; width:32%;"
-													/>
-													<select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
-														<option value="open">Open</option>
-														<option value="in_progress">In Progress</option>
-														<option value="done">Done</option>
-													</select>
-													<input
-														type="date"
-														bind:value={newSubtaskDueDate}
-														style="margin-right:0.5em;"
-													/>
-													{#if newSubtaskDueDate}
-														<button
-															type="button"
-															on:click={() => (newSubtaskDueDate = null)}
-															style="margin-right:0.3em;">❌</button
-														>
-													{/if}
-													<button
-														type="submit"
-														disabled={creatingSubtask || !newSubtaskContent.trim()}
-													>
-														{creatingSubtask ? 'Adding…' : 'Insert Subtask'}
-													</button>
-													<button type="button" on:click={() => (insertingSubtaskAt = null)}
-														>Cancel</button
-													>
-												</form>
-											</td>
-										</tr>
-									{/if}
-								{/if}
 							{/each}
-						</tbody>
-					</table>
-				{/if}
-			</div>
-		</div>
-
-		<!-- Right side pane right -->
-		<aside class="right-pane">
-			<!-- (empty for now) -->
-		</aside>
-
-		<!-- MEMBERS PANEL -->
-		{#if showMembersPanel}
-			<div
-				class="panel-overlay"
-				role="button"
-				tabindex="0"
-				aria-label="Close panel"
-				on:click={closePanels}
-				on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && closePanels()}
-			></div>
-			<!-- svelte-ignore a11y_click_events_have_key_events -->
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<!-- svelte-ignore a11y_interactive_supports_focus -->
-			<div
-				class="panel-drawer members-drawer"
-				role="dialog"
-				aria-modal="true"
-				aria-label="Project members"
-				on:click|stopPropagation
-			>
-				<h3>Members</h3>
-				{#if updateRoleError}
-					<div style="color:#c00;">{updateRoleError}</div>
-				{/if}
-				{#if removeError}
-					<div style="color:#c00;">{removeError}</div>
-				{/if}
-				<table>
-					<thead>
-						<tr>
-							<th>Email</th>
-							<th>Role</th>
-							<th>Status</th>
-							{#if myRole === 'admin'}
-								<th>Remove</th>
-							{/if}
-						</tr>
-					</thead>
-					<tbody>
-						{#each members as m}
-							<tr>
-								<td>
-									{m.email}
-								</td>
-								<td>
-									{#if myRole === 'admin' && m.user_id !== sessionValue?.user.id}
-										<select
-											bind:value={m.role}
-											on:change={(e) =>
-												updateMemberRole(
-													m.user_id || '',
-													(e.target as HTMLSelectElement).value,
-													m.invited_email ? m.invited_email : undefined
-												)}
-											disabled={updatingRoleUserId === (m.user_id || m.invited_email)}
+							{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
+								<tr class="subtask-insert-row">
+									<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+									<td colspan="5">
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<form
+											on:submit|preventDefault={() =>
+												createSubtask(task.id, task.subtasks.length - 1)}
+											on:click|stopPropagation
 										>
-											{#if isCreator}
-												<option value="admin">Admin</option>
+											<input
+												type="text"
+												placeholder="Subtask content"
+												bind:value={newSubtaskContent}
+												required
+												style="margin-right:0.5em; width:32%;"
+											/>
+											<select bind:value={newSubtaskStatus} style="margin-right:0.5em;">
+												<option value="open">Open</option>
+												<option value="in_progress">In Progress</option>
+												<option value="done">Done</option>
+											</select>
+											<input
+												type="date"
+												bind:value={newSubtaskDueDate}
+												style="margin-right:0.5em;"
+											/>
+											{#if newSubtaskDueDate}
+												<button
+													type="button"
+													on:click={() => (newSubtaskDueDate = null)}
+													style="margin-right:0.3em;">❌</button
+												>
 											{/if}
-											<option value="editor">Editor</option>
-											<option value="viewer">Viewer</option>
-										</select>
-									{:else}
-										{m.role}
-									{/if}
-								</td>
-								<td>
-									{m.status}
-								</td>
-								{#if myRole === 'admin'}
-									<td>
-										{#if (m.user_id && m.user_id !== sessionValue?.user.id) || (!m.user_id && m.invited_email)}
-											<button
-												on:click={() =>
-													removeMember(m.user_id || undefined, m.invited_email || undefined)}
-												disabled={removingUserId === (m.user_id || m.invited_email)}
-												style="color:#fff; background:#e74c3c; border:none; padding:0.3em 1.1em; border-radius:0.5em; cursor:pointer;"
-											>
-												{removingUserId === (m.user_id || m.invited_email) ? 'Removing…' : 'Remove'}
+											<button type="submit" disabled={creatingSubtask || !newSubtaskContent.trim()}>
+												{creatingSubtask ? 'Adding…' : 'Insert Subtask'}
 											</button>
-										{/if}
+											<button type="button" on:click={() => (insertingSubtaskAt = null)}
+												>Cancel</button
+											>
+										</form>
 									</td>
-								{/if}
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-				{#if myRole === 'admin'}
-					<div class="invite-container">
-						<h4>Invite a member</h4>
-						<form
-							on:submit|preventDefault={inviteMember}
-							style="display:flex; gap:0.7em; align-items:center;"
-						>
-							<input
-								type="email"
-								placeholder="Email"
-								bind:value={inviteEmail}
-								required
-								style="min-width:17em;"
-							/>
-							<select bind:value={inviteRole}>
-								{#if isCreator}
-									<option value="admin">Admin</option>
-								{/if}
-								<option value="editor">Editor</option>
-								<option value="viewer">Viewer</option>
-							</select>
-
-							{#if !isCreator}
-								<div style="color:#888; font-size:0.98em; margin-bottom:0.5em;">
-									Only the project creator can assign admin rights.
-								</div>
+								</tr>
 							{/if}
-
-							<button type="submit" disabled={inviting || !inviteEmail.trim()}>Invite</button>
-						</form>
-						{#if inviteError}<span style="color:#c00; margin-left:0.7em;">{inviteError}</span>{/if}
-						{#if inviteSuccess}<span style="color:#080; margin-left:0.7em;">{inviteSuccess}</span
-							>{/if}
-					</div>
-				{/if}
-
-				<button on:click={closePanels} class="close-panel-btn">Close</button>
-			</div>
+						{/if}
+					{/each}
+				</tbody>
+			</table>
 		{/if}
 	{/if}
 </div>
 
 <style>
-	/* Main pain, containing all other panes */
 	.project-page-layout {
-		display: flex;
-		flex-direction: row;
-		height: calc(100vh - 4.2em); /* account for top bar */
-		width: 100vw;
-		box-sizing: border-box;
-		align-items: stretch;
-		justify-content: stretch;
-		background: #f8faff;
-		/* Remove margin/centering from .project-detail-container if present! */
-	}
-
-	/* Left Pane */
-	.left-pane {
-		width: 300px;
-		min-width: 220px;
-		max-width: 340px;
+		max-width: 900px;
+		margin: 2em auto;
 		background: #fff;
 		border-radius: 1em;
 		box-shadow: 0 2px 20px #0001;
-		display: flex;
-		flex-direction: column;
-		padding: 2em 1.5em 1.5em 1.5em;
-		margin: 2em 0 2em 2em;
-		height: calc(100% - 4em);
-		position: relative;
-	}
-
-	/* Center Pane */
-	.center-pane {
-		flex: 1 1 0%;
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		padding: 2em 0;
-		margin: 2em 0;
-	}
-
-	/* Center Top (Toolbar) */
-	.center-top {
-		min-height: 3.5em;
-		margin-bottom: 1em;
-		position: sticky;
-		top: 0;
-		z-index: 10;
-		background: transparent;
-		display: flex;
-		align-items: center;
-	}
-
-	/* Center Main (Task area) */
-	.center-main {
-		flex: 1 1 auto;
-		overflow-y: auto;
-		background: #fff;
-		border-radius: 1em;
-		box-shadow: 0 2px 20px #0001;
-		padding: 2em;
-	}
-
-	/* Right Pane */
-	.right-pane {
-		width: 280px;
-		min-width: 160px;
-		max-width: 360px;
-		margin: 2em 2em 2em 0;
-		background: transparent; /* for now */
-		/* Add a border or box-shadow in the future */
+		padding: 2em 2em 1em 2em;
 	}
 
 	.project-toolbar {
