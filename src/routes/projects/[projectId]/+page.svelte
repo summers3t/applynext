@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { page } from '$app/state';
+	//import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 
@@ -41,12 +42,73 @@
 	let loadingProject = false;
 	let errorProject = '';
 
+	let centerMainEl: HTMLDivElement | null = null;
+	let pendingCenterMainScroll: number | null = null;
+
+	// Stay on the same row when add T/ST.
+	let pendingScrollToTaskId: string | null = null;
+	let pendingScrollToSubtaskId: string | null = null;
+
+	$: if (pendingScrollToTaskId) {
+		scrollToTaskWithRetry(pendingScrollToTaskId);
+		pendingScrollToTaskId = null;
+	}
+
+	$: if (pendingScrollToSubtaskId) {
+		scrollToSubtaskWithRetry(pendingScrollToSubtaskId);
+		pendingScrollToSubtaskId = null;
+	}
+
+	function scrollToTaskWithRetry(taskId: string, attempts = 0) {
+		const el = document.getElementById('task-' + taskId);
+		if (el) {
+			el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			return;
+		}
+		if (attempts < 5) {
+			// Try up to 5 times
+			setTimeout(() => scrollToTaskWithRetry(taskId, attempts + 1), 60);
+		}
+	}
+
+	function scrollToSubtaskWithRetry(subtaskId: string, attempts = 0) {
+		const el = document.getElementById('subtask-' + subtaskId);
+		if (el) {
+			el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			return;
+		}
+		if (attempts < 5) {
+			setTimeout(() => scrollToSubtaskWithRetry(subtaskId, attempts + 1), 60);
+		}
+	}
+
+	// Scroll the New Row Into View When It Appears.
+
+	let insertRowEl: HTMLTableRowElement | null = null;
+	let insertSubtaskRowEl: HTMLTableRowElement | null = null;
+
+	$: if (insertingAtIndex !== null && insertRowEl) {
+		// Use setTimeout to ensure DOM is updated before scrolling
+		setTimeout(() => {
+			insertRowEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}, 0);
+	}
+	$: if (insertSubtaskRowEl) {
+		insertSubtaskRowEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+
+	// --------------------------------------------.
+
 	let sessionValue = get(session);
 
 	type TabKey = 'members' | 'edit' | 'tasks'; // add 'tasks' or others as needed
 	let activeTab: TabKey = 'members';
 
 	let isCreator = false; // Will be set after loading project
+
+	// For quick status popover on task
+	let statusMenuOpenFor: string | null = null; // task.id, or null if closed
+	let statusMenuPos = { x: 0, y: 0 }; // absolute menu coordinates
 
 	// ----- Edit Project state -----
 	let editProjectName = '';
@@ -189,10 +251,37 @@
 	let editSubtaskDueDate: string | null = null;
 	let savingSubtaskEdit = false;
 
+	let subtaskStatusMenuOpenFor: string | null = null; // subtask.id, or null if closed
+	let subtaskStatusMenuPos = { x: 0, y: 0 };
+
 	// Expanded/collapsed
 	let expandedTasks: Set<string> = new Set();
 
 	// ---- Helpers ----
+	function openStatusMenu(event: MouseEvent, task: Task) {
+		statusMenuOpenFor = task.id;
+		const rect = (event.target as HTMLElement).getBoundingClientRect();
+		// We want the menu horizontally centered to the dot, and just below it (with a little spacing)
+		//statusMenuPos = { x: rect.left + rect.width / 0, y: rect.bottom - 225 };
+		statusMenuPos = { x: rect.left + rect.width / 2, y: rect.bottom + 8 };
+		// Optional: adjust "6" for vertical gap
+		setTimeout(() => {
+			window.addEventListener('click', closeStatusMenu, { once: true });
+		}, 1);
+		//statusMenuOpenFor = null;
+		subtaskStatusMenuOpenFor = null;
+	}
+
+	function closeStatusMenu() {
+		statusMenuOpenFor = null;
+	}
+
+	async function setTaskStatus(task: Task, status: Status) {
+		await supabase.from('tasks').update({ status }).eq('id', task.id);
+		statusMenuOpenFor = null;
+		await fetchTasks();
+	}
+
 	function filteredIndexToTasksIndex(filteredIndex: number): number {
 		const taskId = filteredTasks[filteredIndex]?.id;
 		return tasks.findIndex((t) => t.id === taskId);
@@ -218,6 +307,31 @@
 	function statusDotColor(status: Status, overdue: boolean): string {
 		if (overdue) return overdueColor;
 		return statusColors[status];
+	}
+
+	function openSubtaskStatusMenu(event: MouseEvent, subtask: Subtask) {
+		subtaskStatusMenuOpenFor = subtask.id;
+		// Use the same logic as tasks for pixel-perfect position!
+		const rect = (event.target as HTMLElement).getBoundingClientRect();
+		subtaskStatusMenuPos = {
+			x: rect.left + rect.width / 2, // horizontally center on the dot
+			y: rect.bottom + 8 // vertically below the dot (tweak +8 as needed)
+		};
+		setTimeout(() => {
+			window.addEventListener('click', closeSubtaskStatusMenu, { once: true });
+		}, 1);
+		statusMenuOpenFor = null;
+		//subtaskStatusMenuOpenFor = null;
+	}
+
+	function closeSubtaskStatusMenu() {
+		subtaskStatusMenuOpenFor = null;
+	}
+
+	async function setSubtaskStatus(subtask: Subtask, status: Status) {
+		await supabase.from('subtasks').update({ status }).eq('id', subtask.id);
+		subtaskStatusMenuOpenFor = null;
+		await fetchTasks();
 	}
 
 	function getInitials(email: string | null | undefined): string {
@@ -553,6 +667,7 @@
 				return;
 			}
 			const inserted = data[0];
+			pendingScrollToTaskId = inserted.id; // <-- NEW
 			const newTasks = [...before, inserted, ...after];
 			await reindexTasks(newTasks);
 		} else {
@@ -566,6 +681,7 @@
 				await fetchTasks();
 				return;
 			}
+			pendingScrollToTaskId = data[0].id; // <--- Add this line here!
 			await fetchTasks();
 		}
 		newTitle = '';
@@ -696,6 +812,11 @@
 	async function saveEditTask() {
 		if (!canEditTasks() || !editingTaskId || !editTitle.trim() || !sessionValue) return;
 		savingEdit = true;
+
+		if (centerMainEl) {
+			pendingCenterMainScroll = centerMainEl.scrollTop;
+		}
+
 		const { error: err } = await supabase
 			.from('tasks')
 			.update({
@@ -711,6 +832,12 @@
 			alert('Error saving task: ' + err.message);
 		}
 		await fetchTasks();
+
+		if (pendingCenterMainScroll !== null && centerMainEl) {
+			centerMainEl.scrollTop = pendingCenterMainScroll;
+			pendingCenterMainScroll = null;
+		}
+
 		editingTaskId = null;
 	}
 
@@ -762,6 +889,7 @@
 				return;
 			}
 			const inserted = data[0];
+			pendingScrollToSubtaskId = inserted.id; // <--- ADD THIS!
 			const newSubtasks = [...before, inserted, ...after];
 			await reindexSubtasks(taskId, newSubtasks);
 		} else {
@@ -785,6 +913,7 @@
 				await fetchTasks();
 				return;
 			}
+			pendingScrollToSubtaskId = data[0].id; // <--- ADD THIS!
 			await fetchTasks();
 		}
 		newSubtaskContent = '';
@@ -814,6 +943,12 @@
 	async function saveEditSubtask() {
 		if (!canEditTasks() || !editingSubtaskId || !editSubtaskContent.trim() || !sessionValue) return;
 		savingSubtaskEdit = true;
+
+		// --- Capture scroll before reload
+		if (centerMainEl) {
+			pendingCenterMainScroll = centerMainEl.scrollTop;
+		}
+
 		const { error: err } = await supabase
 			.from('subtasks')
 			.update({
@@ -828,6 +963,13 @@
 			alert('Error saving subtask: ' + err.message);
 		}
 		await fetchTasks();
+
+		// --- Restore scroll after reload
+		if (pendingCenterMainScroll !== null && centerMainEl) {
+			centerMainEl.scrollTop = pendingCenterMainScroll;
+			pendingCenterMainScroll = null;
+		}
+
 		editingSubtaskId = null;
 	}
 
@@ -921,7 +1063,7 @@
 				<span class="role-badge">{myRole && `Role: ${myRole}`}</span>
 			</div>
 
-			<!-- 6. Edit Project button -->
+			<!-- 6. Edit Project button edit project -->
 			{#if isCreator}
 				<button
 					class="toolbar-btn"
@@ -939,7 +1081,7 @@
 				>
 			{/if}
 
-			<!-- 7. Members button -->
+			<!-- 7. Members button members -->
 			<button
 				class:active-tab={showMembersPanel}
 				class="toolbar-btn"
@@ -950,7 +1092,7 @@
 				style="width:100%; margin-bottom:2em;">👥 Members</button
 			>
 
-			<!-- 8. Delete Project button at the bottom -->
+			<!-- 8. Delete Project button delete at the bottom -->
 			<div style="flex:1"></div>
 			<!-- pushes delete button to the bottom -->
 			{#if myRole === 'admin' || isCreator}
@@ -1063,7 +1205,7 @@
 				</div>
 			</div>
 
-			<div class="center-main">
+			<div class="center-main" bind:this={centerMainEl}>
 				<!-- For next step: Move task/subtask table here -->
 				{#if loadingTasks}
 					<p>Loading tasks…</p>
@@ -1133,8 +1275,10 @@
 									class:selected-row={selected &&
 										selected.type === 'task' &&
 										selected.id === task.id}
+									id={'task-' + task.id}
 									style="cursor:pointer;"
 									on:click={() => selectTask(task.id)}
+									on:dblclick={startEdit}
 								>
 									<td>
 										{#if task.subtasks.length > 0}
@@ -1150,21 +1294,43 @@
 										{/if}
 									</td>
 									<td>
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<span
-											class="status-dot"
+											class="status-dot status-dot-clickable"
 											style="background:{statusDotColor(
 												task.status,
 												isOverdue(task.due_date, task.status)
 											)};
-                  border-color:{isOverdue(task.due_date, task.status) ? overdueColor : '#aaa'};"
-											title={task.status === 'done'
-												? 'Done'
-												: isOverdue(task.due_date, task.status)
-													? 'Overdue'
-													: task.status === 'open'
-														? 'Open'
-														: 'In Progress'}
+         border-color:{isOverdue(task.due_date, task.status) ? overdueColor : '#aaa'};"
+											title="Click to change status"
+											on:click|stopPropagation={(e) => openStatusMenu(e, task)}
 										></span>
+										{#if statusMenuOpenFor === task.id}
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
+											<div
+												class="status-menu-popover"
+												style="left:{statusMenuPos.x}px; top:{statusMenuPos.y}px;"
+												on:click|stopPropagation
+											>
+												{#each Object.entries(statusColors) as [status, color]}
+													{#if status !== 'overdue'}
+														<!-- don't show "overdue" option -->
+														<!-- svelte-ignore a11y_no_static_element_interactions -->
+														<!-- svelte-ignore a11y_click_events_have_key_events -->
+														<span
+															class="status-menu-dot"
+															style="background:{color}; border-color:{status === task.status
+																? '#1976d2'
+																: '#bbb'};"
+															title={status}
+															on:click={() => setTaskStatus(task, status as Status)}
+														></span>
+													{/if}
+												{/each}
+											</div>
+										{/if}
 									</td>
 									{#if editingTaskId === task.id}
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -1229,7 +1395,7 @@
 
 								<!-- Insert form row (Task) -->
 								{#if insertingAtIndex === i}
-									<tr class="insert-form-row">
+									<tr class="insert-form-row" bind:this={insertRowEl}>
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 										<td colspan="5">
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1282,28 +1448,48 @@
 												selected.type === 'subtask' &&
 												selected.id === subtask.id}
 											class="subtask-row"
+											id={'subtask-' + subtask.id}
 											style="cursor:pointer;"
 											on:click={() => selectSubtask(subtask.id, task.id)}
+											on:dblclick={startEdit}
 										>
 											<td><span class="subtask-indent"></span></td>
 											<td>
+												<!-- svelte-ignore a11y_click_events_have_key_events -->
+												<!-- svelte-ignore a11y_no_static_element_interactions -->
 												<span
-													class="status-dot"
+													class="status-dot status-dot-clickable"
 													style="background:{statusDotColor(
 														subtask.status,
 														isOverdue(subtask.due_date, subtask.status)
 													)};
-                      border-color:{isOverdue(subtask.due_date, subtask.status)
-														? overdueColor
-														: '#aaa'};"
-													title={subtask.status === 'done'
-														? 'Done'
-														: isOverdue(subtask.due_date, subtask.status)
-															? 'Overdue'
-															: subtask.status === 'open'
-																? 'Open'
-																: 'In Progress'}
+           border-color:{isOverdue(subtask.due_date, subtask.status) ? overdueColor : '#aaa'};"
+													title="Click to change status"
+													on:click|stopPropagation={(e) => openSubtaskStatusMenu(e, subtask)}
 												></span>
+
+												{#if subtaskStatusMenuOpenFor === subtask.id}
+													<!-- svelte-ignore a11y_click_events_have_key_events -->
+													<!-- svelte-ignore a11y_no_static_element_interactions -->
+													<div
+														class="status-menu-popover"
+														style="left:{subtaskStatusMenuPos.x}px; top:{subtaskStatusMenuPos.y}px;"
+														on:click|stopPropagation
+													>
+														{#each Object.entries(statusColors) as [status, color]}
+															{#if status !== 'overdue'}
+																<span
+																	class="status-menu-dot"
+																	style="background:{color}; border-color:{status === subtask.status
+																		? '#1976d2'
+																		: '#bbb'};"
+																	title={status}
+																	on:click={() => setSubtaskStatus(subtask, status as Status)}
+																></span>
+															{/if}
+														{/each}
+													</div>
+												{/if}
 											</td>
 											{#if editingSubtaskId === subtask.id}
 												<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -1355,7 +1541,7 @@
 										</tr>
 										<!-- Insert form row (Subtask) -->
 										{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && insertingSubtaskAt.index === stIdx}
-											<tr class="subtask-insert-row">
+											<tr class="subtask-insert-row" bind:this={insertSubtaskRowEl}>
 												<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 												<td colspan="5">
 													<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1402,7 +1588,7 @@
 										{/if}
 									{/each}
 									{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
-										<tr class="subtask-insert-row">
+										<tr class="subtask-insert-row" bind:this={insertSubtaskRowEl}>
 											<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 											<td colspan="5">
 												<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1674,10 +1860,10 @@
 		align-items: stretch;
 		justify-content: stretch;
 		background: transparent;
-		min-height: 78vh;
+		min-height: 0;
 		border-radius: 2em;
 		box-shadow: 0 6px 36px 0 #0002;
-		margin: 2em auto;
+		margin: 0 auto;
 		max-width: align-self;
 		gap: 0.5em; /* This prevents panes from visually colliding/overlapping */
 	}
@@ -1998,6 +2184,65 @@
 		background: #fff;
 		border: 2px solid rgba(40, 100, 200, 0.18);
 		box-shadow: 0 0 6px #1976d233;
+	}
+
+	.status-dot-clickable {
+		cursor: pointer;
+		transition:
+			box-shadow 0.18s,
+			border-color 0.14s;
+	}
+	.status-dot-clickable:hover {
+		border-color: #1976d2;
+		box-shadow: 0 2px 10px #1976d232;
+	}
+
+	.status-menu-popover {
+		position: sticky;
+		display: flex;
+		gap: 0.5em;
+		background: rgba(255, 255, 255, 0.96);
+		box-shadow: 0 2px 18px #1976d244;
+		border-radius: 1em;
+		padding: 0.4em 1em;
+		z-index: 9999;
+		align-items: center;
+		animation: fadeIn 0.01s;
+		/* Optional: subtle border */
+		border: 1px solid #e1e6ee;
+		/* Glass effect */
+		backdrop-filter: blur(10px) saturate(1.08);
+		-webkit-backdrop-filter: blur(10px) saturate(1.08);
+		margin-top: 1.15em;
+		transform: translate(-50%, 0); /* This centers horizontally */
+	}
+
+	@keyframes fadeIn {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	.status-menu-dot {
+		width: 1.2em;
+		height: 1.2em;
+		border-radius: 50%;
+		display: inline-block;
+		border: 2px solid #bbb;
+		box-shadow: 0 1px 6px #0001;
+		cursor: pointer;
+		transition:
+			border-color 0.16s,
+			box-shadow 0.15s;
+	}
+	.status-menu-dot:hover {
+		border-color: #1976d2;
+		box-shadow: 0 2px 10px #1976d244;
 	}
 	.selected-row {
 		background: #e3f4fc !important;
