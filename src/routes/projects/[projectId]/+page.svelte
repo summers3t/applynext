@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { page } from '$app/state';
-	//import { tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 
@@ -60,15 +60,13 @@
 	}
 
 	function scrollToTaskWithRetry(taskId: string, attempts = 0) {
-		const el = document.getElementById('task-' + taskId);
-		if (el) {
-			el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		const row = document.getElementById('task-' + taskId);
+		if (row) {
+			row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // "nearest" is key
 			return;
 		}
-		if (attempts < 5) {
-			// Try up to 5 times
-			setTimeout(() => scrollToTaskWithRetry(taskId, attempts + 1), 60);
-		}
+		// retry a few times if necessary
+		if (attempts < 10) setTimeout(() => scrollToTaskWithRetry(taskId, attempts + 1), 60);
 	}
 
 	function scrollToSubtaskWithRetry(subtaskId: string, attempts = 0) {
@@ -97,8 +95,75 @@
 		insertSubtaskRowEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
 
-	// --------------------------------------------.
+	// -------------------------------------------------------------------------------------------.
 
+	// “New” Badge for Newly Created Task/Subtask
+	let recentlyAddedTaskId: string | null = null;
+	let newBadgeTimeout: any = null;
+	let recentlyAddedSubtaskId: string | null = null;
+	let newSubtaskBadgeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// -------------------------------------------------------------------------------------------.
+
+	// Add Improved Scroll-to-Visible for Status Dot Popover.
+
+	let statusMenuPopoverEl: HTMLDivElement | null = null;
+	let subtaskStatusMenuPopoverEl: HTMLDivElement | null = null;
+
+	$: if (statusMenuPopoverEl) {
+		statusMenuPopoverEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+	$: if (subtaskStatusMenuPopoverEl) {
+		subtaskStatusMenuPopoverEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+
+	// -------------------------------------------------------------------------------------------.
+
+	// Scroll logic will then highlight and scroll to the moved row and keep it selected.
+
+	let pendingSmoothScrollToTaskId: string | null = null;
+
+	$: if (pendingScrollToTaskId) {
+		if (centerMainEl && isRowVisibleInContainer('task-' + pendingScrollToTaskId, centerMainEl)) {
+			// Row is already visible, no need to scroll!
+			pendingScrollToTaskId = null;
+		} else {
+			scrollToTaskWithRetry(pendingScrollToTaskId);
+			pendingScrollToTaskId = null;
+		}
+	}
+
+	$: if (pendingSmoothScrollToTaskId) {
+		scrollToTaskCenterSmooth(pendingSmoothScrollToTaskId);
+		pendingSmoothScrollToTaskId = null;
+	}
+
+	// $: if (pendingScrollToTaskId) {
+	// 	scrollToTaskWithRetry(pendingScrollToTaskId);
+	// 	pendingScrollToTaskId = null;
+	// }
+
+	function isRowVisibleInContainer(rowId: string, container: HTMLElement) {
+		const row = document.getElementById(rowId);
+		if (!row) return false;
+		const containerRect = container.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+
+		return rowRect.top >= containerRect.top && rowRect.bottom <= containerRect.bottom;
+	}
+
+	function scrollToTaskCenterSmooth(taskId: string, tries = 0) {
+		const row = document.getElementById('task-' + taskId);
+		if (row) {
+			row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			return;
+		}
+		if (tries < 5) {
+			setTimeout(() => scrollToTaskCenterSmooth(taskId, tries + 1), 60);
+		}
+	}
+
+	// -------------------------------------------------------------------------------------------.
 	let sessionValue = get(session);
 
 	type TabKey = 'members' | 'edit' | 'tasks'; // add 'tasks' or others as needed
@@ -260,16 +325,24 @@
 	// ---- Helpers ----
 	function openStatusMenu(event: MouseEvent, task: Task) {
 		statusMenuOpenFor = task.id;
-		const rect = (event.target as HTMLElement).getBoundingClientRect();
+		subtaskStatusMenuOpenFor = null;
+
+		const dotEl = event.target as HTMLElement;
+		const rect = dotEl.getBoundingClientRect();
+
 		// We want the menu horizontally centered to the dot, and just below it (with a little spacing)
-		//statusMenuPos = { x: rect.left + rect.width / 0, y: rect.bottom - 225 };
 		statusMenuPos = { x: rect.left + rect.width / 2, y: rect.bottom + 8 };
 		// Optional: adjust "6" for vertical gap
+
+		// Scroll the dot (or row) into view
+		const row = document.getElementById('task-' + task.id);
+		if (row) {
+			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+
 		setTimeout(() => {
 			window.addEventListener('click', closeStatusMenu, { once: true });
 		}, 1);
-		//statusMenuOpenFor = null;
-		subtaskStatusMenuOpenFor = null;
 	}
 
 	function closeStatusMenu() {
@@ -279,6 +352,9 @@
 	async function setTaskStatus(task: Task, status: Status) {
 		await supabase.from('tasks').update({ status }).eq('id', task.id);
 		statusMenuOpenFor = null;
+
+		pendingScrollToTaskId = task.id;
+
 		await fetchTasks();
 	}
 
@@ -311,17 +387,24 @@
 
 	function openSubtaskStatusMenu(event: MouseEvent, subtask: Subtask) {
 		subtaskStatusMenuOpenFor = subtask.id;
+		statusMenuOpenFor = null;
+
 		// Use the same logic as tasks for pixel-perfect position!
-		const rect = (event.target as HTMLElement).getBoundingClientRect();
+		const dotEl = event.target as HTMLElement;
+		const rect = dotEl.getBoundingClientRect();
 		subtaskStatusMenuPos = {
 			x: rect.left + rect.width / 2, // horizontally center on the dot
 			y: rect.bottom + 8 // vertically below the dot (tweak +8 as needed)
 		};
+
+		const row = document.getElementById('subtask-' + subtask.id);
+		if (row) {
+			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+
 		setTimeout(() => {
 			window.addEventListener('click', closeSubtaskStatusMenu, { once: true });
 		}, 1);
-		statusMenuOpenFor = null;
-		//subtaskStatusMenuOpenFor = null;
 	}
 
 	function closeSubtaskStatusMenu() {
@@ -331,6 +414,9 @@
 	async function setSubtaskStatus(subtask: Subtask, status: Status) {
 		await supabase.from('subtasks').update({ status }).eq('id', subtask.id);
 		subtaskStatusMenuOpenFor = null;
+
+		pendingScrollToSubtaskId = subtask.id; // <-- Set scroll target
+
 		await fetchTasks();
 	}
 
@@ -667,6 +753,13 @@
 				return;
 			}
 			const inserted = data[0];
+
+			recentlyAddedTaskId = inserted.id; // ← here
+			if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
+			newBadgeTimeout = setTimeout(() => {
+				recentlyAddedTaskId = null;
+			}, 60000);
+
 			pendingScrollToTaskId = inserted.id; // <-- NEW
 			const newTasks = [...before, inserted, ...after];
 			await reindexTasks(newTasks);
@@ -682,6 +775,13 @@
 				return;
 			}
 			pendingScrollToTaskId = data[0].id; // <--- Add this line here!
+
+			recentlyAddedTaskId = data[0].id; // ← PLACE IT HERE, just after the successful insert!
+			if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
+			newBadgeTimeout = setTimeout(() => {
+				recentlyAddedTaskId = null;
+			}, 60000);
+
 			await fetchTasks();
 		}
 		newTitle = '';
@@ -705,14 +805,12 @@
 	async function moveSelectedTask(offset: number) {
 		if (!canEditTasks() || !selected || selected.type !== 'task') return;
 
-		// Use the filteredTasks array, not tasks, for visible order
 		const filteredIdx = filteredTasks.findIndex((t) => t.id === selected?.id);
 		if (filteredIdx === -1) return;
 
 		const filteredSwapWith = filteredIdx + offset;
 		if (filteredSwapWith < 0 || filteredSwapWith >= filteredTasks.length) return;
 
-		// Map filtered indices back to main tasks array
 		const mainIdx = tasks.findIndex((t) => t.id === filteredTasks[filteredIdx].id);
 		const mainSwapWith = tasks.findIndex((t) => t.id === filteredTasks[filteredSwapWith].id);
 
@@ -720,10 +818,18 @@
 
 		const newOrder = [...tasks];
 		const [moved] = newOrder.splice(mainIdx, 1);
+
 		newOrder.splice(mainSwapWith, 0, moved);
 
 		await reindexTasks(newOrder);
+
+		pendingSmoothScrollToTaskId = moved.id;
+
+		await fetchTasks();
+
+		// Restore selection first, THEN trigger scroll
 		selected = { type: 'task', id: moved.id };
+		//pendingScrollToTaskId = moved.id;
 	}
 
 	async function deleteSelected() {
@@ -732,14 +838,45 @@
 
 		const sel = selected!; // TypeScript: sel is NOT null after this
 
+		// ---------- TASK ----------
 		if (sel.type === 'task') {
+			// Find which Task to scroll to after deletion (next or previous, if available)
+			let scrollToTaskId = null;
+			const deletedIndex = filteredTasks.findIndex((t) => t.id === sel.id);
+			if (deletedIndex < filteredTasks.length - 1) {
+				scrollToTaskId = filteredTasks[deletedIndex + 1]?.id;
+			} else if (deletedIndex > 0) {
+				scrollToTaskId = filteredTasks[deletedIndex - 1]?.id;
+			}
+
 			await supabase.from('tasks').delete().eq('id', sel.id).eq('project_id', projectId);
 			const newTasks = tasks.filter((t) => t.id !== sel.id);
 			await reindexTasks(newTasks);
 			selected = null;
-		} else if (sel.type === 'subtask' && sel.parentTaskId) {
+
+			// SCROLL after deletion (after DOM update)
+			if (scrollToTaskId) {
+				await tick();
+				const el = document.getElementById('task-' + scrollToTaskId);
+				if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
+		}
+
+		// ---------- SUBTASK ----------
+		else if (sel.type === 'subtask' && sel.parentTaskId) {
 			const task = tasks.find((t) => t.id === sel.parentTaskId);
 			if (!task) return;
+
+			// Find which Subtask to scroll to after deletion (next or previous, if available)
+			let scrollToSubtaskId = null;
+			const stList = task.subtasks;
+			const deletedStIndex = stList.findIndex((st) => st.id === sel.id);
+			if (deletedStIndex < stList.length - 1) {
+				scrollToSubtaskId = stList[deletedStIndex + 1]?.id;
+			} else if (deletedStIndex > 0) {
+				scrollToSubtaskId = stList[deletedStIndex - 1]?.id;
+			}
+
 			await supabase
 				.from('subtasks')
 				.delete()
@@ -749,6 +886,13 @@
 			const newSubtasks = task.subtasks.filter((st) => st.id !== sel.id);
 			await reindexSubtasks(task.id, newSubtasks);
 			selected = null;
+
+			// SCROLL after deletion (after DOM update)
+			if (scrollToSubtaskId) {
+				await tick();
+				const el = document.getElementById('subtask-' + scrollToSubtaskId);
+				if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
 		}
 	}
 
@@ -890,6 +1034,13 @@
 			}
 			const inserted = data[0];
 			pendingScrollToSubtaskId = inserted.id; // <--- ADD THIS!
+
+			recentlyAddedSubtaskId = inserted.id;
+			if (newSubtaskBadgeTimeout) clearTimeout(newSubtaskBadgeTimeout);
+			newSubtaskBadgeTimeout = setTimeout(() => {
+				recentlyAddedSubtaskId = null;
+			}, 60000);
+
 			const newSubtasks = [...before, inserted, ...after];
 			await reindexSubtasks(taskId, newSubtasks);
 		} else {
@@ -914,6 +1065,13 @@
 				return;
 			}
 			pendingScrollToSubtaskId = data[0].id; // <--- ADD THIS!
+
+			recentlyAddedSubtaskId = data[0].id;
+			if (newSubtaskBadgeTimeout) clearTimeout(newSubtaskBadgeTimeout);
+			newSubtaskBadgeTimeout = setTimeout(() => {
+				recentlyAddedSubtaskId = null;
+			}, 60000);
+
 			await fetchTasks();
 		}
 		newSubtaskContent = '';
@@ -1311,6 +1469,7 @@
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<div
 												class="status-menu-popover"
+												bind:this={statusMenuPopoverEl}
 												style="left:{statusMenuPos.x}px; top:{statusMenuPos.y}px;"
 												on:click|stopPropagation
 											>
@@ -1370,7 +1529,12 @@
 											</form>
 										</td>
 									{:else}
-										<td>{task.title}</td>
+										<td>
+											{task.title}
+											{#if recentlyAddedTaskId === task.id}
+												<span class="new-badge">New</span>
+											{/if}
+										</td>
 										<td>{task.description}</td>
 										<td class="created-by">
 											{#if task.created_by_email}
@@ -1473,6 +1637,7 @@
 													<!-- svelte-ignore a11y_no_static_element_interactions -->
 													<div
 														class="status-menu-popover"
+														bind:this={subtaskStatusMenuPopoverEl}
 														style="left:{subtaskStatusMenuPos.x}px; top:{subtaskStatusMenuPos.y}px;"
 														on:click|stopPropagation
 													>
@@ -1531,7 +1696,12 @@
 												</td>
 											{:else}
 												<td></td>
-												<td>{subtask.content}</td>
+												<td>
+													{subtask.content}
+													{#if subtask.id === recentlyAddedSubtaskId}
+														<span class="new-badge">New</span>
+													{/if}
+												</td>
 												<td class="date-cell">
 													{#if subtask.due_date}
 														{formatDate(subtask.due_date)}
@@ -2329,5 +2499,32 @@
 		padding: 0.5em 1.4em;
 		font-weight: 600;
 		cursor: pointer;
+	}
+	.new-badge {
+		display: inline-block;
+		background: linear-gradient(90deg, #47e37a, #37b6ff);
+		color: #fff;
+		border-radius: 1em;
+		font-size: 0.8em;
+		font-weight: bold;
+		padding: 0.18em 0.8em;
+		margin-left: 0.7em;
+		vertical-align: middle;
+		animation: badge-pop 0.4s;
+		box-shadow: 0 1px 6px #46e37a44;
+		letter-spacing: 0.02em;
+	}
+	@keyframes badge-pop {
+		0% {
+			transform: scale(0.4);
+			opacity: 0;
+		}
+		80% {
+			transform: scale(1.2);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1);
+		}
 	}
 </style>
