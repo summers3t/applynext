@@ -357,21 +357,28 @@
 		return statusColors[status];
 	}
 
-	function openSubtaskStatusMenu(event: MouseEvent, subtask: Subtask) {
+	function openSubtaskStatusMenu(event: MouseEvent | KeyboardEvent, subtask: Subtask) {
 		subtaskStatusMenuOpenFor = subtask.id;
 		statusMenuOpenFor = null;
 
-		// Use the same logic as tasks for pixel-perfect position!
-		const dotEl = event.target as HTMLElement;
-		const rect = dotEl.getBoundingClientRect();
-		subtaskStatusMenuPos = {
-			x: rect.left + rect.width / 2, // horizontally center on the dot
-			y: rect.bottom + 8 // vertically below the dot (tweak +8 as needed)
-		};
+		let rect;
+		// If this was a mouse event, use the mouse target's bounding rect
+		if (event instanceof MouseEvent) {
+			const dotEl = event.target as HTMLElement;
+			rect = dotEl.getBoundingClientRect();
+		} else if (event instanceof KeyboardEvent) {
+			// For keyboard, use the currently focused element
+			const dotEl = document.activeElement as HTMLElement;
+			if (dotEl) {
+				rect = dotEl.getBoundingClientRect();
+			}
+		}
 
-		const row = document.getElementById('subtask-' + subtask.id);
-		if (row) {
-			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		if (rect) {
+			subtaskStatusMenuPos = {
+				x: rect.left + rect.width / 2,
+				y: rect.top - 8 // popover above
+			};
 		}
 
 		setTimeout(() => {
@@ -1469,6 +1476,7 @@
 													if (e.key === 'Escape') closeStatusMenu();
 												}}
 											>
+												<div class="popover-arrow"></div>
 												{#each Object.entries(statusColors) as [status, color]}
 													{#if status !== 'overdue'}
 														<button
@@ -1614,45 +1622,65 @@
 											on:dblclick={startEdit}
 										>
 											<td><span class="subtask-indent"></span></td>
-											<td>
-												<!-- svelte-ignore a11y_click_events_have_key_events -->
-												<!-- svelte-ignore a11y_no_static_element_interactions -->
-												<span
+											<td style="position: relative;">
+												<!-- Subtask status dot (now as button for accessibility) -->
+												<button
+													type="button"
 													class="status-dot status-dot-clickable"
 													style="background:{statusDotColor(
 														subtask.status,
 														isOverdue(subtask.due_date, subtask.status)
 													)};
-           border-color:{isOverdue(subtask.due_date, subtask.status) ? overdueColor : '#aaa'};"
+        border-color:{isOverdue(subtask.due_date, subtask.status) ? overdueColor : '#aaa'};"
 													title="Click to change status"
+													aria-label="Change subtask status"
 													on:click|stopPropagation={(e) => openSubtaskStatusMenu(e, subtask)}
-												></span>
+													on:keydown={(e) => {
+														// Allow keyboard access to open the popover with Enter/Space
+														if ((e.key === 'Enter' || e.key === ' ') && !subtaskStatusMenuOpenFor) {
+															openSubtaskStatusMenu(e, subtask);
+														}
+													}}
+												></button>
 
 												{#if subtaskStatusMenuOpenFor === subtask.id}
-													<!-- svelte-ignore a11y_click_events_have_key_events -->
-													<!-- svelte-ignore a11y_no_static_element_interactions -->
 													<div
 														class="status-menu-popover"
+														role="dialog"
+														aria-label="Change subtask status"
+														tabindex="0"
+														style="
+				position: absolute;
+				left: 50%;
+				bottom: 120%;
+				transform: translateX(-50%);
+				z-index: 99999;
+			"
 														bind:this={subtaskStatusMenuPopoverEl}
-														style="left:{subtaskStatusMenuPos.x}px; top:{subtaskStatusMenuPos.y}px;"
 														on:click|stopPropagation
+														on:keydown={(e) => {
+															if (e.key === 'Escape') closeSubtaskStatusMenu();
+														}}
 													>
 														{#each Object.entries(statusColors) as [status, color]}
 															{#if status !== 'overdue'}
-																<span
+																<button
+																	type="button"
 																	class="status-menu-dot"
 																	style="background:{color}; border-color:{status === subtask.status
 																		? '#1976d2'
 																		: '#bbb'};"
 																	title={status}
+																	aria-label={'Set status to ' + status}
 																	on:click={() =>
 																		setSubtaskStatus(subtask, status as Status, task.id)}
-																></span>
+																></button>
 															{/if}
 														{/each}
 													</div>
 												{/if}
 											</td>
+
 											{#if editingSubtaskId === subtask.id}
 												<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 												<td colspan="3" class="subtask-edit-row">
@@ -2351,6 +2379,10 @@
 		background: #fff;
 		border: 2px solid rgba(40, 100, 200, 0.18);
 		box-shadow: 0 0 6px #1976d233;
+		transition:
+			box-shadow 0.18s cubic-bezier(0.43, 1.14, 0.69, 0.93),
+			border-color 0.15s,
+			transform 0.16s;
 	}
 
 	.status-dot-clickable {
@@ -2364,24 +2396,52 @@
 		box-shadow: 0 2px 10px #1976d232;
 	}
 
+	.status-dot.status-dot-clickable:hover,
+	.status-dot.status-dot-clickable:focus {
+		border-color: #1976d2;
+		box-shadow:
+			0 2px 18px #1976d2aa,
+			0 0 0 3px #a7c8fa44;
+		transform: scale(1.15) rotate(-5deg);
+		outline: none;
+	}
+
+	/* ------- Pop up dots -------- */
 	.status-menu-popover {
-		position: sticky;
+		position: relative;
 		display: flex;
 		gap: 0.5em;
 		background: rgba(255, 255, 255, 0.96);
 		box-shadow: 0 2px 18px #1976d244;
-		border-radius: 1em;
+		border-radius: 0.9em;
 		padding: 0.4em 1em;
 		z-index: 9999;
 		align-items: center;
 		animation: fadeIn 0.01s;
 		/* Optional: subtle border */
-		border: 1px solid #e1e6ee;
+		border: 5.5px solid #d7e2f4;
 		/* Glass effect */
 		backdrop-filter: blur(10px) saturate(1.08);
 		-webkit-backdrop-filter: blur(10px) saturate(1.08);
 		margin-top: 1.15em;
 		transform: translate(-50%, 0); /* This centers horizontally */
+
+		animation: fadeInPopover 0.03s cubic-bezier(0.43, 1.14, 0.69, 0.93);
+		box-shadow:
+			0 2px 2px #67696b38,
+			0 7.5px 8px #0001;
+		padding: 0.5em 1.1em;
+	}
+
+	@keyframes fadeInPopover {
+		from {
+			opacity: 0;
+			transform: translateY(-14px) scale(0.94);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
 	}
 
 	@keyframes fadeIn {
@@ -2396,20 +2456,27 @@
 	}
 
 	.status-menu-dot {
-		width: 1.2em;
-		height: 1.2em;
+		width: 1.45em;
+		height: 1.45em;
 		border-radius: 50%;
 		display: inline-block;
 		border: 2px solid #bbb;
 		box-shadow: 0 1px 6px #0001;
 		cursor: pointer;
+		margin: 0 0.12em;
 		transition:
-			border-color 0.16s,
-			box-shadow 0.15s;
+			border-color 0.14s,
+			box-shadow 0.16s,
+			transform 0.16s;
+		outline: none;
 	}
-	.status-menu-dot:hover {
+	.status-menu-dot:hover,
+	.status-menu-dot:focus {
 		border-color: #1976d2;
-		box-shadow: 0 2px 10px #1976d244;
+		box-shadow:
+			0 2px 16px #1976d244,
+			0 0 0 2.5px #a7c8fa66;
+		transform: scale(1.16) rotate(4deg);
 	}
 	.selected-row {
 		background: #e3f4fc !important;
