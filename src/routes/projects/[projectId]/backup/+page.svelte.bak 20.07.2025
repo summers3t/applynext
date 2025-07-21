@@ -45,35 +45,40 @@
 	let centerMainEl: HTMLDivElement | null = null;
 	let pendingCenterMainScroll: number | null = null;
 
-	// -----------------------------------------------------------------------------------------------------.
-	// General stay at the same row after edit.
-	// -----------------------------------------------------------------------------------------------------.
+	// Stay on the same row when add T/ST.
+	let pendingScrollToTaskId: string | null = null;
+	let pendingScrollToSubtaskId: string | null = null;
 
-	let pendingScrollTarget: {
-		type: 'task' | 'subtask';
-		id: string;
-		parentTaskId?: string | null;
-	} | null = null;
-
-	$: if (pendingScrollTarget) {
-		(async () => {
-			await tick();
-			const { type, id, parentTaskId } = pendingScrollTarget!;
-			let el: HTMLElement | null = null;
-
-			if (type === 'task') {
-				el = document.getElementById('task-' + id);
-			} else if (type === 'subtask') {
-				el = document.getElementById('subtask-' + id);
-			}
-			// if (el) {
-			// 	el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			// }
-			pendingScrollTarget = null;
-		})();
+	$: if (pendingScrollToTaskId) {
+		scrollToTaskWithRetry(pendingScrollToTaskId);
+		pendingScrollToTaskId = null;
 	}
 
-	// -----------------------------------------------------------------------------------------------------.
+	$: if (pendingScrollToSubtaskId) {
+		scrollToSubtaskWithRetry(pendingScrollToSubtaskId);
+		pendingScrollToSubtaskId = null;
+	}
+
+	function scrollToTaskWithRetry(taskId: string, attempts = 0) {
+		const row = document.getElementById('task-' + taskId);
+		if (row) {
+			row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // "nearest" is key
+			return;
+		}
+		// retry a few times if necessary
+		if (attempts < 10) setTimeout(() => scrollToTaskWithRetry(taskId, attempts + 1), 60);
+	}
+
+	function scrollToSubtaskWithRetry(subtaskId: string, attempts = 0) {
+		const el = document.getElementById('subtask-' + subtaskId);
+		if (el) {
+			el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			return;
+		}
+		if (attempts < 5) {
+			setTimeout(() => scrollToSubtaskWithRetry(subtaskId, attempts + 1), 60);
+		}
+	}
 
 	// Scroll the New Row Into View When It Appears.
 
@@ -112,14 +117,31 @@
 		subtaskStatusMenuPopoverEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
 
-	function getTaskById(id: string): Task | undefined {
-		return tasks.find((t) => t.id === id);
+	// -------------------------------------------------------------------------------------------.
+
+	// Scroll logic will then highlight and scroll to the moved row and keep it selected.
+
+	let pendingSmoothScrollToTaskId: string | null = null;
+
+	$: if (pendingScrollToTaskId) {
+		if (centerMainEl && isRowVisibleInContainer('task-' + pendingScrollToTaskId, centerMainEl)) {
+			// Row is already visible, no need to scroll!
+			pendingScrollToTaskId = null;
+		} else {
+			scrollToTaskWithRetry(pendingScrollToTaskId);
+			pendingScrollToTaskId = null;
+		}
 	}
 
-	// Add in <script>
-	$: taskForStatusMenu = statusMenuOpenFor ? tasks.find((t) => t.id === statusMenuOpenFor) : null;
+	$: if (pendingSmoothScrollToTaskId) {
+		scrollToTaskCenterSmooth(pendingSmoothScrollToTaskId);
+		pendingSmoothScrollToTaskId = null;
+	}
 
-	// -------------------------------------------------------------------------------------------.
+	// $: if (pendingScrollToTaskId) {
+	// 	scrollToTaskWithRetry(pendingScrollToTaskId);
+	// 	pendingScrollToTaskId = null;
+	// }
 
 	function isRowVisibleInContainer(rowId: string, container: HTMLElement) {
 		const row = document.getElementById(rowId);
@@ -128,6 +150,17 @@
 		const rowRect = row.getBoundingClientRect();
 
 		return rowRect.top >= containerRect.top && rowRect.bottom <= containerRect.bottom;
+	}
+
+	function scrollToTaskCenterSmooth(taskId: string, tries = 0) {
+		const row = document.getElementById('task-' + taskId);
+		if (row) {
+			row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			return;
+		}
+		if (tries < 5) {
+			setTimeout(() => scrollToTaskCenterSmooth(taskId, tries + 1), 60);
+		}
 	}
 
 	// -------------------------------------------------------------------------------------------.
@@ -295,16 +328,16 @@
 		subtaskStatusMenuOpenFor = null;
 
 		const dotEl = event.target as HTMLElement;
-		const container = centerMainEl;
+		const rect = dotEl.getBoundingClientRect();
 
-		if (container && dotEl) {
-			const dotRect = dotEl.getBoundingClientRect();
-			const containerRect = container.getBoundingClientRect();
-			// Center horizontally, and place *just above* the dot
-			statusMenuPos = {
-				x: dotRect.left - containerRect.left + dotRect.width / 2,
-				y: dotRect.top - containerRect.top - 8 // 8px gap above the dot; menu’s bottom aligns with dot’s top
-			};
+		// We want the menu horizontally centered to the dot, and just below it (with a little spacing)
+		statusMenuPos = { x: rect.left + rect.width / 2, y: rect.bottom + 8 };
+		// Optional: adjust "6" for vertical gap
+
+		// Scroll the dot (or row) into view
+		const row = document.getElementById('task-' + task.id);
+		if (row) {
+			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		}
 
 		setTimeout(() => {
@@ -320,14 +353,9 @@
 		await supabase.from('tasks').update({ status }).eq('id', task.id);
 		statusMenuOpenFor = null;
 
-		// Update in-memory for instant UI
-		const idx = tasks.findIndex((t) => t.id === task.id);
-		if (idx !== -1) {
-			const updatedTask = { ...tasks[idx], status };
-			tasks = [...tasks.slice(0, idx), updatedTask, ...tasks.slice(idx + 1)];
-		}
+		pendingScrollToTaskId = task.id;
 
-		pendingScrollTarget = { type: 'task', id: task.id };
+		await fetchTasks();
 	}
 
 	function filteredIndexToTasksIndex(filteredIndex: number): number {
@@ -383,30 +411,13 @@
 		subtaskStatusMenuOpenFor = null;
 	}
 
-	async function setSubtaskStatus(subtask: Subtask, status: Status, parentTaskId: string) {
+	async function setSubtaskStatus(subtask: Subtask, status: Status) {
 		await supabase.from('subtasks').update({ status }).eq('id', subtask.id);
 		subtaskStatusMenuOpenFor = null;
 
-		// Update in-memory for instant UI
-		const taskIdx = tasks.findIndex((t) => t.id === parentTaskId);
-		if (taskIdx !== -1) {
-			const subIdx = tasks[taskIdx].subtasks.findIndex((st) => st.id === subtask.id);
-			if (subIdx !== -1) {
-				const updatedSubtask = { ...tasks[taskIdx].subtasks[subIdx], status };
-				const updatedSubtasks = [
-					...tasks[taskIdx].subtasks.slice(0, subIdx),
-					updatedSubtask,
-					...tasks[taskIdx].subtasks.slice(subIdx + 1)
-				];
-				const updatedTask = {
-					...tasks[taskIdx],
-					subtasks: updatedSubtasks
-				};
-				tasks = [...tasks.slice(0, taskIdx), updatedTask, ...tasks.slice(taskIdx + 1)];
-			}
-		}
+		pendingScrollToSubtaskId = subtask.id; // <-- Set scroll target
 
-		pendingScrollTarget = { type: 'subtask', id: subtask.id, parentTaskId };
+		await fetchTasks();
 	}
 
 	function getInitials(email: string | null | undefined): string {
@@ -696,7 +707,7 @@
 				supabase.from('tasks').update({ sort_index: idx }).eq('id', task.id)
 			)
 		);
-		//await fetchTasks();
+		await fetchTasks();
 	}
 
 	async function reindexSubtasks(taskId: string, newOrder: Subtask[]) {
@@ -705,7 +716,7 @@
 				supabase.from('subtasks').update({ sort_index: idx }).eq('id', st.id)
 			)
 		);
-		//await fetchTasks();
+		await fetchTasks();
 	}
 
 	// ---- Task CRUD (permission checks) ----
@@ -723,12 +734,14 @@
 			status: newStatus,
 			due_date: newDueDate,
 			sort_index,
-			owner_id: sessionValue.user.id,
-			created_by_email: sessionValue.user.email
+			owner_id: sessionValue.user.id, // <-- ESSENTIAL
+			created_by_email: sessionValue.user.email // <-- NEW LINE (add this!)
 		};
-		let inserted;
+
 		if (atIndex !== null) {
 			sort_index = atIndex + 1;
+			const before = tasks.slice(0, sort_index);
+			const after = tasks.slice(sort_index);
 			const { data, error: err } = await supabase
 				.from('tasks')
 				.insert([{ ...taskData, sort_index }])
@@ -736,14 +749,20 @@
 			creating = false;
 			if (err || !data || !data[0]) {
 				alert('Error creating task: ' + (err?.message ?? 'unknown'));
+				await fetchTasks();
 				return;
 			}
-			inserted = data[0];
-			const before = tasks.slice(0, sort_index);
-			const after = tasks.slice(sort_index);
+			const inserted = data[0];
+
+			recentlyAddedTaskId = inserted.id; // ← here
+			if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
+			newBadgeTimeout = setTimeout(() => {
+				recentlyAddedTaskId = null;
+			}, 60000);
+
+			pendingScrollToTaskId = inserted.id; // <-- NEW
 			const newTasks = [...before, inserted, ...after];
 			await reindexTasks(newTasks);
-			tasks = newTasks;
 		} else {
 			const { data, error: err } = await supabase
 				.from('tasks')
@@ -752,20 +771,19 @@
 			creating = false;
 			if (err || !data || !data[0]) {
 				alert('Error creating task: ' + (err?.message ?? 'unknown'));
+				await fetchTasks();
 				return;
 			}
-			inserted = data[0];
-			tasks = [...tasks, inserted];
+			pendingScrollToTaskId = data[0].id; // <--- Add this line here!
+
+			recentlyAddedTaskId = data[0].id; // ← PLACE IT HERE, just after the successful insert!
+			if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
+			newBadgeTimeout = setTimeout(() => {
+				recentlyAddedTaskId = null;
+			}, 60000);
+
+			await fetchTasks();
 		}
-
-		recentlyAddedTaskId = inserted.id;
-		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
-		newBadgeTimeout = setTimeout(() => {
-			recentlyAddedTaskId = null;
-		}, 60000);
-
-		pendingScrollTarget = { type: 'task', id: inserted.id };
-
 		newTitle = '';
 		newDescription = '';
 		newStatus = 'open';
@@ -800,23 +818,18 @@
 
 		const newOrder = [...tasks];
 		const [moved] = newOrder.splice(mainIdx, 1);
+
 		newOrder.splice(mainSwapWith, 0, moved);
 
-		// Locally update sort_index
-		for (let i = 0; i < newOrder.length; ++i) {
-			newOrder[i].sort_index = i;
-		}
-
-		tasks = newOrder; // <-- THIS triggers a local UI update without refetch
-
-		// Call backend to update indices asynchronously (don't wait for it to finish)
 		await reindexTasks(newOrder);
 
-		// Keep selection and pending scroll
-		selected = { type: 'task', id: moved.id };
-		pendingScrollTarget = { type: 'task', id: moved.id };
+		pendingSmoothScrollToTaskId = moved.id;
 
-		//await fetchTasks();
+		await fetchTasks();
+
+		// Restore selection first, THEN trigger scroll
+		selected = { type: 'task', id: moved.id };
+		//pendingScrollToTaskId = moved.id;
 	}
 
 	async function deleteSelected() {
@@ -839,15 +852,14 @@
 			await supabase.from('tasks').delete().eq('id', sel.id).eq('project_id', projectId);
 			const newTasks = tasks.filter((t) => t.id !== sel.id);
 			await reindexTasks(newTasks);
-			tasks = newTasks; // This is the key line: update the local array
 			selected = null;
 
 			// SCROLL after deletion (after DOM update)
-			// if (scrollToTaskId) {
-			// 	await tick();
-			// 	//const el = document.getElementById('task-' + scrollToTaskId);
-			// 	//if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			// }
+			if (scrollToTaskId) {
+				await tick();
+				const el = document.getElementById('task-' + scrollToTaskId);
+				if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
 		}
 
 		// ---------- SUBTASK ----------
@@ -873,12 +885,14 @@
 				.eq('project_id', projectId);
 			const newSubtasks = task.subtasks.filter((st) => st.id !== sel.id);
 			await reindexSubtasks(task.id, newSubtasks);
-			// Mutate local array:
-			const taskIdx = tasks.findIndex((t) => t.id === task.id);
-			if (taskIdx !== -1) {
-				tasks[taskIdx] = { ...task, subtasks: newSubtasks };
-			}
 			selected = null;
+
+			// SCROLL after deletion (after DOM update)
+			if (scrollToSubtaskId) {
+				await tick();
+				const el = document.getElementById('subtask-' + scrollToSubtaskId);
+				if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
 		}
 	}
 
@@ -987,13 +1001,17 @@
 	async function createSubtask(taskId: string, atIndex: number | null = null) {
 		if (!canEditTasks() || !newSubtaskContent.trim() || !sessionValue) return;
 		creatingSubtask = true;
-		const taskIdx = tasks.findIndex((t) => t.id === taskId);
-		if (taskIdx === -1) return;
-		const task = tasks[taskIdx];
-		let inserted;
+		const task = tasks.find((t) => t.id === taskId);
+		if (!task) return;
 		let sort_index = task.subtasks.length;
 		if (atIndex !== null) {
 			sort_index = atIndex + 1;
+
+			console.log('Creating subtask (insert at index), owner_id:', sessionValue?.user?.id);
+
+			const before = task.subtasks.slice(0, sort_index);
+			const after = task.subtasks.slice(sort_index);
+
 			const { data, error: err } = await supabase
 				.from('subtasks')
 				.insert([
@@ -1011,14 +1029,20 @@
 			creatingSubtask = false;
 			if (err || !data || !data[0]) {
 				alert('Error creating subtask: ' + (err?.message ?? 'unknown'));
+				await fetchTasks();
 				return;
 			}
-			inserted = data[0];
-			const before = task.subtasks.slice(0, sort_index);
-			const after = task.subtasks.slice(sort_index);
+			const inserted = data[0];
+			pendingScrollToSubtaskId = inserted.id; // <--- ADD THIS!
+
+			recentlyAddedSubtaskId = inserted.id;
+			if (newSubtaskBadgeTimeout) clearTimeout(newSubtaskBadgeTimeout);
+			newSubtaskBadgeTimeout = setTimeout(() => {
+				recentlyAddedSubtaskId = null;
+			}, 60000);
+
 			const newSubtasks = [...before, inserted, ...after];
-			await reindexSubtasks(task.id, newSubtasks);
-			tasks[taskIdx] = { ...task, subtasks: newSubtasks };
+			await reindexSubtasks(taskId, newSubtasks);
 		} else {
 			const { data, error: err } = await supabase
 				.from('subtasks')
@@ -1030,63 +1054,47 @@
 						status: newSubtaskStatus,
 						due_date: newSubtaskDueDate,
 						sort_index,
-						owner_id: sessionValue.user.id
+						owner_id: sessionValue.user.id // <-- THIS LINE IS NEEDED
 					}
 				])
 				.select();
 			creatingSubtask = false;
 			if (err || !data || !data[0]) {
 				alert('Error creating subtask: ' + (err?.message ?? 'unknown'));
+				await fetchTasks();
 				return;
 			}
-			inserted = data[0];
-			tasks[taskIdx] = { ...task, subtasks: [...task.subtasks, inserted] };
+			pendingScrollToSubtaskId = data[0].id; // <--- ADD THIS!
+
+			recentlyAddedSubtaskId = data[0].id;
+			if (newSubtaskBadgeTimeout) clearTimeout(newSubtaskBadgeTimeout);
+			newSubtaskBadgeTimeout = setTimeout(() => {
+				recentlyAddedSubtaskId = null;
+			}, 60000);
+
+			await fetchTasks();
 		}
-
-		recentlyAddedSubtaskId = inserted.id;
-		if (newSubtaskBadgeTimeout) clearTimeout(newSubtaskBadgeTimeout);
-		newSubtaskBadgeTimeout = setTimeout(() => {
-			recentlyAddedSubtaskId = null;
-		}, 60000);
-
-		pendingScrollTarget = { type: 'subtask', id: inserted.id, parentTaskId: taskId };
-
 		newSubtaskContent = '';
 		newSubtaskStatus = 'open';
 		newSubtaskDueDate = null;
 		insertingSubtaskAt = null;
 	}
-
 	async function moveSelectedSubtask(offset: number) {
 		if (!canEditTasks() || !selected || selected.type !== 'subtask' || !selected.parentTaskId)
 			return;
 
-		const sel = selected!;
+		const sel = selected!; // TypeScript: guaranteed non-null after the guard above
 
-		const taskIdx = tasks.findIndex((t) => t.id === sel.parentTaskId);
-		if (taskIdx === -1) return;
-
-		const task = tasks[taskIdx];
+		const task = tasks.find((t) => t.id === sel.parentTaskId);
+		if (!task) return;
 		const idx = task.subtasks.findIndex((st) => st.id === sel.id);
 		if (idx === -1) return;
-
 		const swapWith = idx + offset;
 		if (swapWith < 0 || swapWith >= task.subtasks.length) return;
-
-		// Create new subtasks order for this task
-		const newSubtasks = [...task.subtasks];
-		const [moved] = newSubtasks.splice(idx, 1);
-		newSubtasks.splice(swapWith, 0, moved);
-
-		await reindexSubtasks(task.id, newSubtasks);
-
-		// Update only this task's subtasks locally, to avoid reload/flicker
-		tasks[taskIdx] = {
-			...task,
-			subtasks: newSubtasks
-		};
-
-		// Keep the moved subtask selected
+		const newOrder = [...task.subtasks];
+		const [moved] = newOrder.splice(idx, 1);
+		newOrder.splice(swapWith, 0, moved);
+		await reindexSubtasks(task.id, newOrder);
 		selected = { type: 'subtask', id: moved.id, parentTaskId: task.id };
 	}
 
@@ -1456,32 +1464,28 @@
 											title="Click to change status"
 											on:click|stopPropagation={(e) => openStatusMenu(e, task)}
 										></span>
-										{#if statusMenuOpenFor && taskForStatusMenu}
+										{#if statusMenuOpenFor === task.id}
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<div
 												class="status-menu-popover"
-												style="position:fixed; left:{statusMenuPos.x}px; top:{statusMenuPos.y}px; z-index:99999;"
 												bind:this={statusMenuPopoverEl}
-												role="dialog"
-												aria-label="Change task status"
-												tabindex="0"
+												style="left:{statusMenuPos.x}px; top:{statusMenuPos.y}px;"
 												on:click|stopPropagation
-												on:keydown={(e) => {
-													if (e.key === 'Escape') closeStatusMenu();
-												}}
 											>
 												{#each Object.entries(statusColors) as [status, color]}
 													{#if status !== 'overdue'}
-														<button
-															type="button"
+														<!-- don't show "overdue" option -->
+														<!-- svelte-ignore a11y_no_static_element_interactions -->
+														<!-- svelte-ignore a11y_click_events_have_key_events -->
+														<span
 															class="status-menu-dot"
-															style="background:{color}; border-color:{status ===
-															taskForStatusMenu.status
+															style="background:{color}; border-color:{status === task.status
 																? '#1976d2'
 																: '#bbb'};"
 															title={status}
-															aria-label={'Set status to ' + status}
-															on:click={() => setTaskStatus(taskForStatusMenu, status as Status)}
-														></button>
+															on:click={() => setTaskStatus(task, status as Status)}
+														></span>
 													{/if}
 												{/each}
 											</div>
@@ -1645,8 +1649,7 @@
 																		? '#1976d2'
 																		: '#bbb'};"
 																	title={status}
-																	on:click={() =>
-																		setSubtaskStatus(subtask, status as Status, task.id)}
+																	on:click={() => setSubtaskStatus(subtask, status as Status)}
 																></span>
 															{/if}
 														{/each}
