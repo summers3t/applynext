@@ -150,8 +150,12 @@
 			return;
 		}
 
-		// Update local items array
+		// Update local state for instant UI
 		items = items.map((item) => (item.id === itemId ? { ...item, status: newStatus } : item));
+		taskItems = taskItems.map((link) =>
+			link.item.id === itemId ? { ...link, item: { ...link.item, status: newStatus } } : link
+		);
+		console.log('[DEBUG] After toggle, taskItems:', taskItems);
 	}
 
 	async function fetchTaskItemLinks(taskId: string) {
@@ -319,6 +323,15 @@
 			);
 		});
 
+	// taskId → [linked item objs...]
+	$: taskIdToItems = tasks.reduce(
+		(map, task) => {
+			map[task.id] = taskItems.filter((link) => link.task_id === task.id).map((link) => link.item);
+			return map;
+		},
+		{} as Record<string, Item[]>
+	);
+
 	// --- Invite Member UI/Logic ---
 	let inviteEmail = '';
 	let inviteRole = 'editor';
@@ -374,6 +387,16 @@
 	let tasks: Task[] = [];
 	let loadingTasks = false;
 	let errorTasks = '';
+
+	type TaskItemLink = {
+		task_id: string;
+		item_id: string;
+		item: Item; // will contain status, name, etc.
+	};
+
+	let taskItems: TaskItemLink[] = [];
+	let loadingTaskItems = false;
+	let errorTaskItems = '';
 
 	// Task form states
 	let newTitle = '';
@@ -816,6 +839,37 @@
 		);
 	}
 
+	async function fetchTaskItems() {
+		if (!projectId) {
+			taskItems = [];
+			loadingTaskItems = false;
+			return;
+		}
+		loadingTaskItems = true;
+		errorTaskItems = '';
+		// JOIN: Get all task_items + item fields
+		const { data, error } = await supabase
+			.from('task_items')
+			.select('task_id, item_id, item:items(*)')
+			.eq('project_id', projectId);
+
+		if (error) {
+			errorTaskItems = error.message;
+			taskItems = [];
+			loadingTaskItems = false;
+			return;
+		}
+		// Only keep links with loaded item (defensive)
+		taskItems = (data ?? [])
+			.map((link) => ({
+				...link,
+				item: Array.isArray(link.item) ? link.item[0] : link.item
+			}))
+			.filter((link) => link.item);
+
+		loadingTaskItems = false;
+	}
+
 	// ---- Reindex helpers ----
 	async function reindexTasks(newOrder: Task[]) {
 		await Promise.all(
@@ -909,6 +963,8 @@
 			}
 		}
 		newTaskSelectedItemIds = [];
+
+		await fetchTaskItems();
 
 		recentlyAddedTaskId = inserted.id;
 		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
@@ -1145,6 +1201,7 @@
 		}
 		editTaskSelectedItemIds = [];
 
+		await fetchTaskItems();
 		await fetchTasks();
 
 		if (pendingCenterMainScroll !== null && centerMainEl) {
@@ -1322,6 +1379,7 @@
 			loadProject();
 			fetchTasks();
 			fetchItems();
+			fetchTaskItems();
 		}
 	});
 	session.subscribe((s) => {
@@ -1329,6 +1387,7 @@
 		if (projectId && projectId.length >= 10) {
 			loadProject();
 			fetchTasks();
+			fetchTaskItems();
 		}
 	});
 
@@ -1555,6 +1614,10 @@
 			</div>
 
 			<div class="center-main" bind:this={centerMainEl}>
+				<!-- DEBUG OUTPUT: REMOVE AFTER TESTING
+				<pre>items: {JSON.stringify(items, null, 2)}</pre>
+				<pre>taskItems: {JSON.stringify(taskItems, null, 2)}</pre> -->
+
 				<!-- For next step: Move task/subtask table here -->
 				{#if loadingTasks}
 					<p>Loading tasks…</p>
@@ -1624,6 +1687,9 @@
 									class:selected-row={selected &&
 										selected.type === 'task' &&
 										selected.id === task.id}
+									class:highlight-missing-items={taskIdToItems[task.id]?.some(
+										(item) => item.status === 'not_present'
+									)}
 									id={'task-' + task.id}
 									style="cursor:pointer;"
 									on:click={() => selectTask(task.id)}
@@ -2878,5 +2944,17 @@
 		100% {
 			transform: scale(1);
 		}
+	}
+
+	.highlight-missing-items {
+		/* Eye-catching but not too aggressive */
+		box-shadow:
+			0 0 0 3px #e74c3c99,
+			0 0 14px #ff1a1a22;
+		border-left: 5px solid #e74c3c;
+		background: #fff6f6 !important;
+		transition:
+			box-shadow 0.13s,
+			background 0.11s;
 	}
 </style>
