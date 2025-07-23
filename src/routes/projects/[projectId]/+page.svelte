@@ -57,6 +57,11 @@
 	let pendingCenterMainScroll: number | null = null;
 
 	// -----------------------------------------------------------------------------------------------------.
+	// For Edited by feature.
+	// -----------------------------------------------------------------------------------------------------.
+	let userMap: Record<string, string> = {};
+
+	// -----------------------------------------------------------------------------------------------------.
 	// "Items" feature.
 	// -----------------------------------------------------------------------------------------------------.
 
@@ -360,6 +365,7 @@
 
 	type Subtask = {
 		id: string;
+		short_id: string;
 		task_id: string;
 		project_id: string;
 		content: string;
@@ -368,10 +374,12 @@
 		sort_index: number;
 		created_at: string;
 		updated_at: string;
+		last_edited_by?: string | null;
 	};
 
 	type Task = {
 		id: string;
+		short_id: string;
 		project_id: string;
 		title: string;
 		description: string;
@@ -381,6 +389,7 @@
 		created_at: string;
 		updated_at: string;
 		created_by_email?: string;
+		last_edited_by?: string | null;
 		subtasks: Subtask[];
 	};
 
@@ -827,6 +836,40 @@
 				subtasks: subtasks.sort((a: Subtask, b: Subtask) => a.sort_index - b.sort_index)
 			};
 		});
+
+		// -- 1. COLLECT ALL last_edited_by USER IDS --
+		const allEditedByIds = Array.from(
+			new Set([
+				...tasks.map((t) => t.last_edited_by).filter(Boolean),
+				...tasks.flatMap((t) =>
+					Array.isArray(t.subtasks) ? t.subtasks.map((st) => st.last_edited_by).filter(Boolean) : []
+				)
+			])
+		);
+
+		// -- 2. LOAD EMAILS FOR THESE USERS --
+		if (allEditedByIds.length > 0) {
+			const { data: users, error } = await supabase
+				.from('user_emails')
+				.select('id, email')
+				.in('id', allEditedByIds);
+
+			if (error) {
+				console.error('Error loading user emails:', error.message);
+				userMap = {};
+			} else {
+				userMap = (users ?? []).reduce(
+					(map, u) => {
+						map[u.id] = u.email;
+						return map;
+					},
+					{} as Record<string, string>
+				);
+			}
+		} else {
+			userMap = {};
+		}
+
 		loadingTasks = false;
 		selected = null;
 		insertingAtIndex = null;
@@ -905,7 +948,8 @@
 			due_date: newDueDate,
 			sort_index,
 			owner_id: sessionValue.user.id,
-			created_by_email: sessionValue.user.email
+			created_by_email: sessionValue.user.email,
+			last_edited_by: sessionValue.user.id
 		};
 		let inserted;
 
@@ -1049,13 +1093,6 @@
 			await reindexTasks(newTasks);
 			tasks = newTasks; // This is the key line: update the local array
 			selected = null;
-
-			// SCROLL after deletion (after DOM update)
-			// if (scrollToTaskId) {
-			// 	await tick();
-			// 	//const el = document.getElementById('task-' + scrollToTaskId);
-			// 	//if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			// }
 		}
 
 		// ---------- SUBTASK ----------
@@ -1164,7 +1201,8 @@
 				title: editTitle.trim(),
 				description: editDescription.trim(),
 				status: editStatus,
-				due_date: editDueDate
+				due_date: editDueDate,
+				last_edited_by: sessionValue?.user?.id
 			})
 			.eq('id', editingTaskId)
 			.eq('project_id', projectId);
@@ -1614,11 +1652,6 @@
 			</div>
 
 			<div class="center-main" bind:this={centerMainEl}>
-				<!-- DEBUG OUTPUT: REMOVE AFTER TESTING
-				<pre>items: {JSON.stringify(items, null, 2)}</pre>
-				<pre>taskItems: {JSON.stringify(taskItems, null, 2)}</pre> -->
-
-				<!-- For next step: Move task/subtask table here -->
 				{#if loadingTasks}
 					<p>Loading tasks…</p>
 				{:else if errorTasks}
@@ -1672,14 +1705,15 @@
 					<table class="task-table">
 						<thead>
 							<tr>
+								<th style="width:3em;">ID</th>
 								<th style="width:3em;"></th>
 								<th style="width:2em;"></th>
 								<th style="width:32%;">Task</th>
-								<th style="width:26%;">Description / Subtask</th>
-								<th style="width:18%;">Created by</th>
 								<th class="date-cell">Due Date</th>
+								<th style="width:12%;">Edited by</th>
 							</tr>
 						</thead>
+
 						<tbody>
 							{#each filteredTasks as task, i}
 								<!-- TASK ROW -->
@@ -1695,19 +1729,10 @@
 									on:click={() => selectTask(task.id)}
 									on:dblclick={startEdit}
 								>
-									<td>
-										{#if task.subtasks.length > 0}
-											<button
-												class="expander"
-												on:click|stopPropagation={() => toggleExpand(task.id)}
-												aria-label={expandedTasks.has(task.id)
-													? 'Collapse subtasks'
-													: 'Expand subtasks'}
-											>
-												{expandedTasks.has(task.id) ? '➖' : '➕'}
-											</button>
-										{/if}
-									</td>
+									<!-------- Task ID task id --------->
+									<td class="short-id">{task.short_id}</td>
+
+									<!-------- Color circle dot --------->
 									<td>
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1753,6 +1778,22 @@
 											</div>
 										{/if}
 									</td>
+
+									<!-------- Expand subtasks if any +/- --------->
+									<td>
+										{#if task.subtasks.length > 0}
+											<button
+												class="expander"
+												on:click|stopPropagation={() => toggleExpand(task.id)}
+												aria-label={expandedTasks.has(task.id)
+													? 'Collapse subtasks'
+													: 'Expand subtasks'}
+											>
+												{expandedTasks.has(task.id) ? '➖' : '➕'}
+											</button>
+										{/if}
+									</td>
+
 									{#if editingTaskId === task.id}
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 										<td colspan="4" class="edit-form-row">
@@ -1805,7 +1846,11 @@
 												<span class="new-badge">New</span>
 											{/if}
 										</td>
-										<td>{task.description}</td>
+
+										<!-- Task description
+										<td>{task.description}</td> -->
+
+										<!-- Task created by
 										<td class="created-by">
 											{#if task.created_by_email}
 												{#if task.created_by_email === sessionValue?.user?.email}
@@ -1818,10 +1863,19 @@
 											{:else}
 												—
 											{/if}
-										</td>
+										</td> -->
+
+										<!-- Task due date -->
 										<td class="date-cell">
 											{#if task.due_date}
 												{formatDate(task.due_date)}
+											{/if}
+										</td>
+										<td class="edited-by">
+											{#if task.last_edited_by && userMap[task.last_edited_by]}
+												{getInitials(userMap[task.last_edited_by])}
+											{:else}
+												—
 											{/if}
 										</td>
 									{/if}
@@ -1882,7 +1936,7 @@
 									</tr>
 								{/if}
 
-								<!-- SUBTASK ROWS (only if expanded) -->
+								<!-- SUBTASK ROWS subtasks rows (only if expanded) -->
 								{#if expandedTasks.has(task.id)}
 									{#each task.subtasks as subtask, stIdx}
 										<tr
@@ -1895,7 +1949,11 @@
 											on:click={() => selectSubtask(subtask.id, task.id)}
 											on:dblclick={startEdit}
 										>
-											<td><span class="subtask-indent"></span></td>
+											<!-- <td><span class="subtask-indent"></span></td> -->
+
+											<!-- Subtask ID subtask id (only if expanded) -->
+											<td class="short-id">{subtask.short_id}</td>
+
 											<td style="position: relative;">
 												<!-- Subtask status dot (now as button for accessibility) -->
 												<button
@@ -2956,5 +3014,13 @@
 		transition:
 			box-shadow 0.13s,
 			background 0.11s;
+	}
+
+	/* ------- Style for Task/Subtask ID ---------- */
+	.short-id {
+		font-family: monospace;
+		opacity: 0.7;
+		color: #555;
+		letter-spacing: 0.04em;
 	}
 </style>
