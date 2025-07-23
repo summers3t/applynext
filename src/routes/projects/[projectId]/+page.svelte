@@ -7,6 +7,7 @@
 	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
+	import ItemChecklist from '$lib/components/ItemChecklist.svelte';
 
 	// ========== Project Info & Members ==========
 	type Member = {
@@ -32,6 +33,16 @@
 		invited_email?: string;
 		users?: { email: string }[];
 	};
+	type ItemStatus = 'present' | 'not_present';
+
+	type Item = {
+		id: string;
+		project_id: string;
+		name: string;
+		status: ItemStatus;
+		created_by: string;
+		created_at: string;
+	};
 
 	let projectId = '';
 	$: projectId = page.params.projectId;
@@ -44,6 +55,116 @@
 
 	let centerMainEl: HTMLDivElement | null = null;
 	let pendingCenterMainScroll: number | null = null;
+
+	// -----------------------------------------------------------------------------------------------------.
+	// "Items" feature.
+	// -----------------------------------------------------------------------------------------------------.
+
+	let items: Item[] = [];
+	let loadingItems = false;
+	let errorItems = '';
+	let showItemsPanel = false;
+	let newItemName = '';
+	let addingItem = false;
+	let removingItemId: string | null = null;
+	let editTaskSelectedItemIds: string[] = []; // for editing tasks
+	let newTaskSelectedItemIds: string[] = []; // for creating tasks
+
+	async function fetchItems() {
+		if (!projectId) {
+			items = [];
+			loadingItems = false;
+			return;
+		}
+		loadingItems = true;
+		errorItems = '';
+		const { data, error } = await supabase
+			.from('items')
+			.select('*')
+			.eq('project_id', projectId)
+			.order('name', { ascending: true });
+		if (error) {
+			errorItems = error.message;
+			items = [];
+			loadingItems = false;
+			return;
+		}
+		items = data ?? [];
+		loadingItems = false;
+	}
+
+	async function addNewItem() {
+		if (!newItemName.trim() || addingItem) return;
+		addingItem = true;
+		errorItems = '';
+
+		const { data, error } = await supabase
+			.from('items')
+			.insert([
+				{
+					project_id: projectId,
+					name: newItemName.trim(),
+					status: 'not_present',
+					created_by: sessionValue?.user?.id ?? null
+				}
+			])
+			.select()
+			.single(); // Gets the newly created item
+
+		addingItem = false;
+
+		if (error) {
+			errorItems = error.message;
+			return;
+		}
+
+		if (data) {
+			items = [...items, data]; // Add the new item directly to the local array
+			newItemName = '';
+		}
+	}
+
+	async function removeItem(itemId: string) {
+		if (!itemId || removingItemId) return;
+		removingItemId = itemId;
+
+		const { error } = await supabase.from('items').delete().eq('id', itemId);
+		removingItemId = null;
+
+		if (error) {
+			errorItems = error.message;
+			return;
+		}
+
+		// Update local items list (no full fetch)
+		items = items.filter((item) => item.id !== itemId);
+	}
+
+	async function toggleItemStatus(itemId: string, currentStatus: 'present' | 'not_present') {
+		const newStatus = currentStatus === 'present' ? 'not_present' : 'present';
+
+		const { error } = await supabase.from('items').update({ status: newStatus }).eq('id', itemId);
+
+		if (error) {
+			errorItems = error.message;
+			return;
+		}
+
+		// Update local items array
+		items = items.map((item) => (item.id === itemId ? { ...item, status: newStatus } : item));
+	}
+
+	async function fetchTaskItemLinks(taskId: string) {
+		const { data, error } = await supabase
+			.from('task_items')
+			.select('item_id')
+			.eq('task_id', taskId);
+		if (error) {
+			console.error('Error fetching task items:', error.message);
+			return [];
+		}
+		return data ? data.map((row) => row.item_id) : [];
+	}
 
 	// -----------------------------------------------------------------------------------------------------.
 	// General stay at the same row after edit.
@@ -74,7 +195,6 @@
 	}
 
 	// -----------------------------------------------------------------------------------------------------.
-
 	// Scroll the New Row Into View When It Appears.
 
 	let insertRowEl: HTMLTableRowElement | null = null;
@@ -734,6 +854,7 @@
 			created_by_email: sessionValue.user.email
 		};
 		let inserted;
+
 		if (atIndex !== null) {
 			sort_index = atIndex + 1;
 			const { data, error: err } = await supabase
@@ -764,6 +885,30 @@
 			inserted = data[0];
 			tasks = [...tasks, inserted];
 		}
+
+		// --- Add links to items for this task ---
+		if (newTaskSelectedItemIds && newTaskSelectedItemIds.length > 0) {
+			console.log(
+				'[DEBUG] Linking items:',
+				newTaskSelectedItemIds,
+				'for task:',
+				inserted.id,
+				'in project:',
+				projectId
+			);
+			const links = newTaskSelectedItemIds.map((item_id) => ({
+				task_id: inserted.id,
+				item_id,
+				project_id: projectId, // << YOU NEED TO INCLUDE THIS FIELD!
+				created_by: sessionValue?.user.id
+			}));
+			const { error: linkError } = await supabase.from('task_items').insert(links);
+			if (linkError) {
+				console.error('Failed to link items to task:', linkError.message);
+				// Optionally: alert('Error linking items: ' + linkError.message);
+			}
+		}
+		newTaskSelectedItemIds = [];
 
 		recentlyAddedTaskId = inserted.id;
 		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
@@ -905,7 +1050,7 @@
 	}
 
 	// ---- Inline Edit ----
-	function startEdit() {
+	async function startEdit() {
 		if (!canEditTasks() || !selected) return;
 
 		const sel = selected!; // TypeScript: guaranteed not null below
@@ -921,6 +1066,9 @@
 			insertingAtIndex = null;
 			insertingSubtaskAt = null;
 			editingSubtaskId = null;
+
+			editTaskSelectedItemIds = await fetchTaskItemLinks(task.id);
+			console.log('[DEBUG] Selected items for editing:', editTaskSelectedItemIds);
 		} else if (sel.type === 'subtask' && sel.parentTaskId) {
 			const task = tasks.find((t) => t.id === sel.parentTaskId);
 			const subtask = task?.subtasks.find((st) => st.id === sel.id);
@@ -968,6 +1116,35 @@
 		if (err) {
 			alert('Error saving task: ' + err.message);
 		}
+
+		// --- Update linked items in task_items ---
+		// Remove all previous links
+		await supabase.from('task_items').delete().eq('task_id', editingTaskId);
+
+		// Insert new links, if any
+		if (editTaskSelectedItemIds && editTaskSelectedItemIds.length > 0) {
+			console.log(
+				'[DEBUG] Updating linked items:',
+				editTaskSelectedItemIds,
+				'for task:',
+				editingTaskId,
+				'in project:',
+				projectId
+			);
+			const links = editTaskSelectedItemIds.map((item_id) => ({
+				task_id: editingTaskId,
+				item_id,
+				project_id: projectId, // << YOU NEED TO INCLUDE THIS FIELD!
+				created_by: sessionValue?.user.id
+			}));
+			const { error: linkError } = await supabase.from('task_items').insert(links);
+			if (linkError) {
+				console.error('Failed to update linked items:', linkError.message);
+				// Optionally: alert('Error updating item links: ' + linkError.message);
+			}
+		}
+		editTaskSelectedItemIds = [];
+
 		await fetchTasks();
 
 		if (pendingCenterMainScroll !== null && centerMainEl) {
@@ -1144,6 +1321,7 @@
 		if (projectId && projectId.length >= 10) {
 			loadProject();
 			fetchTasks();
+			fetchItems();
 		}
 	});
 	session.subscribe((s) => {
@@ -1248,6 +1426,20 @@
 				}}
 				style="width:100%; margin-bottom:2em;">👥 Members</button
 			>
+
+			<!-- 7. Items button items -->
+			<button
+				class="toolbar-btn"
+				class:active-tab={showItemsPanel}
+				on:click={() => {
+					showItemsPanel = !showItemsPanel;
+					showMembersPanel = false;
+					showEditProjectPanel = false;
+				}}
+				style="width:100%; margin-bottom:2em;"
+			>
+				📦 Items
+			</button>
 
 			<!-- 8. Delete Project button delete at the bottom -->
 			<div style="flex:1"></div>
@@ -1524,6 +1716,14 @@
 														style="margin-right:0.3em;">❌</button
 													>
 												{/if}
+
+												<!-- Insert checklist here -->
+												<ItemChecklist
+													{items}
+													selectedIds={editTaskSelectedItemIds}
+													onChange={(ids) => (editTaskSelectedItemIds = ids)}
+												/>
+
 												<button type="submit" disabled={savingEdit || !editTitle.trim()}
 													>Save</button
 												>
@@ -1597,6 +1797,14 @@
 														style="margin-right:0.3em;">❌</button
 													>
 												{/if}
+
+												<!-- Insert checklist here -->
+												<ItemChecklist
+													{items}
+													selectedIds={newTaskSelectedItemIds}
+													onChange={(ids) => (newTaskSelectedItemIds = ids)}
+												/>
+
 												<button type="submit" disabled={creating || !newTitle.trim()}>
 													{creating ? 'Adding…' : 'Insert Task'}
 												</button>
@@ -2039,6 +2247,86 @@
 				</form>
 
 				<button on:click={closePanels} class="close-panel-btn">Close</button>
+			</div>
+		{/if}
+		<!---------------------- Items panel items ------------------------->
+		{#if showItemsPanel}
+			<div
+				class="panel-overlay"
+				role="button"
+				tabindex="0"
+				aria-label="Close items panel"
+				on:click={() => (showItemsPanel = false)}
+				on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && (showItemsPanel = false)}
+			></div>
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="panel-drawer items-drawer"
+				role="dialog"
+				aria-modal="true"
+				aria-label="Project items"
+				tabindex="0"
+				on:click|stopPropagation
+			>
+				<h3>Items</h3>
+				{#if errorItems}
+					<div style="color:#c00;">{errorItems}</div>
+				{/if}
+				{#if loadingItems}
+					<p>Loading items…</p>
+				{:else}
+					<!-- Add new item form -->
+					<form
+						on:submit|preventDefault={addNewItem}
+						style="display:flex; gap:0.8em; align-items:center; margin-bottom:1em;"
+					>
+						<input
+							type="text"
+							placeholder="Item name (e.g. ID Card)"
+							bind:value={newItemName}
+							required
+							style="flex:1; min-width:0;"
+						/>
+						<button
+							type="submit"
+							style="background:#1976d2;color:#fff;border:none;padding:0.35em 1.5em;border-radius:0.6em;"
+							disabled={addingItem || loadingItems}
+						>
+							{addingItem ? 'Adding…' : 'Add'}
+						</button>
+					</form>
+					<ul style="padding:0;">
+						{#each items as item, idx (item.id)}
+							<li style="display:flex;align-items:center;gap:1em;padding:0.6em 0;">
+								<span>{item.name}</span>
+
+								<button
+									type="button"
+									aria-label="Toggle status"
+									style="
+                    width:1.2em;height:1.2em;display:inline-block;border-radius:0.6em;
+                    background:{item.status === 'present' ? '#47e37a' : '#e74c3c'};
+                    box-shadow:0 1px 4px #0001;vertical-align:middle;cursor:pointer;border:none;
+                "
+									on:click={() => toggleItemStatus(item.id, item.status)}
+									title={item.status === 'present' ? 'Mark as not present' : 'Mark as present'}
+								></button>
+
+								<span style="flex:1"></span>
+								<!-------- Remove Item button -------->
+								<button
+									type="button"
+									style="background:#eee;color:#c00;border:none;border-radius:0.5em;padding:0.25em 1.1em;"
+									on:click={() => removeItem(item.id)}
+									disabled={removingItemId === item.id}
+								>
+									{removingItemId === item.id ? 'Removing…' : 'Remove'}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<button on:click={() => (showItemsPanel = false)} class="close-panel-btn">Close</button>
 			</div>
 		{/if}
 	{/if}
