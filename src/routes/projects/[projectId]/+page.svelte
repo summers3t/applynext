@@ -374,6 +374,7 @@
 		sort_index: number;
 		created_at: string;
 		updated_at: string;
+		assigned_to?: string | null;
 		last_edited_by?: string | null;
 	};
 
@@ -390,6 +391,7 @@
 		updated_at: string;
 		created_by_email?: string;
 		last_edited_by?: string | null;
+		assigned_to?: string | null;
 		subtasks: Subtask[];
 	};
 
@@ -434,6 +436,8 @@
 	let editSubtaskStatus: Status = 'open';
 	let editSubtaskDueDate: string | null = null;
 	let savingSubtaskEdit = false;
+	let newSubtaskAssignedTo: string = ''; // For assignee in "create" form
+	let editSubtaskAssignedTo: string | null = ''; // For assignee in "edit" form
 
 	let subtaskStatusMenuOpenFor: string | null = null; // subtask.id, or null if closed
 	let subtaskStatusMenuPos = { x: 0, y: 0 };
@@ -814,6 +818,7 @@
 			loadingTasks = false;
 			return;
 		}
+
 		// Admin sees all, others see tasks for this project only
 		const { data, error: err } = await supabase
 			.from('tasks')
@@ -827,6 +832,7 @@
 			loadingTasks = false;
 			return;
 		}
+
 		tasks = (data ?? []).map((t) => {
 			const subtasks = Array.isArray(t.subtasks)
 				? t.subtasks.map((st: Subtask) => ({ ...st, sort_index: st.sort_index ?? 0 }))
@@ -837,17 +843,17 @@
 			};
 		});
 
-		// -- 1. COLLECT ALL last_edited_by USER IDS --
-		const allEditedByIds = Array.from(
-			new Set([
-				...tasks.map((t) => t.last_edited_by).filter(Boolean),
-				...tasks.flatMap((t) =>
-					Array.isArray(t.subtasks) ? t.subtasks.map((st) => st.last_edited_by).filter(Boolean) : []
-				)
-			])
+		// --- 1. Gather all unique last_edited_by user IDs (for both tasks and subtasks) ---
+		const userIdsFromTasks = tasks.map((t) => t.last_edited_by).filter((id) => !!id);
+		const userIdsFromSubtasks = tasks.flatMap((t) =>
+			Array.isArray(t.subtasks)
+				? t.subtasks.map((st) => st.last_edited_by).filter((id) => !!id)
+				: []
 		);
 
-		// -- 2. LOAD EMAILS FOR THESE USERS --
+		const allEditedByIds = Array.from(new Set([...userIdsFromTasks, ...userIdsFromSubtasks]));
+
+		// --- 2. Fetch user emails and build the userMap ---
 		if (allEditedByIds.length > 0) {
 			const { data: users, error } = await supabase
 				.from('user_emails')
@@ -870,6 +876,7 @@
 			userMap = {};
 		}
 
+		// --- 3. Reset UI state as before ---
 		loadingTasks = false;
 		selected = null;
 		insertingAtIndex = null;
@@ -1170,6 +1177,7 @@
 			editSubtaskContent = subtask.content;
 			editSubtaskStatus = subtask.status;
 			editSubtaskDueDate = subtask.due_date;
+			editSubtaskAssignedTo = subtask.assigned_to || '';
 			insertingAtIndex = null;
 			insertingSubtaskAt = null;
 			editingTaskId = null;
@@ -1257,6 +1265,7 @@
 		newSubtaskContent = '';
 		newSubtaskStatus = 'open';
 		newSubtaskDueDate = null;
+		newSubtaskAssignedTo = '';
 		editingTaskId = null;
 		editingSubtaskId = null;
 		insertingAtIndex = null;
@@ -1273,6 +1282,7 @@
 		let sort_index = task.subtasks.length;
 		if (atIndex !== null) {
 			sort_index = atIndex + 1;
+			console.log('Creating subtask with assigned_to:', newSubtaskAssignedTo);
 			const { data, error: err } = await supabase
 				.from('subtasks')
 				.insert([
@@ -1283,7 +1293,9 @@
 						status: newSubtaskStatus,
 						due_date: newSubtaskDueDate,
 						sort_index,
-						owner_id: sessionValue.user.id
+						owner_id: sessionValue.user.id,
+						last_edited_by: sessionValue.user.id,
+						assigned_to: newSubtaskAssignedTo || null
 					}
 				])
 				.select();
@@ -1383,7 +1395,9 @@
 			.update({
 				content: editSubtaskContent.trim(),
 				status: editSubtaskStatus,
-				due_date: editSubtaskDueDate
+				due_date: editSubtaskDueDate,
+				last_edited_by: sessionValue.user.id,
+				assigned_to: editSubtaskAssignedTo || null // save null if blank/unassigned
 			})
 			.eq('id', editingSubtaskId)
 			.eq('project_id', projectId);
@@ -1703,12 +1717,14 @@
 					</div>
 				{:else}
 					<table class="task-table">
+						<!-- ------ task table header -------- -->
 						<thead>
 							<tr>
 								<th style="width:3em;">ID</th>
 								<th style="width:3em;"></th>
 								<th style="width:2em;"></th>
 								<th style="width:32%;">Task</th>
+								<th style="width:18%;">Assigned to</th>
 								<th class="date-cell">Due Date</th>
 								<th style="width:12%;">Edited by</th>
 							</tr>
@@ -1716,7 +1732,7 @@
 
 						<tbody>
 							{#each filteredTasks as task, i}
-								<!-- TASK ROW -->
+								<!-- ------ task table -------- -->
 								<tr
 									class:selected-row={selected &&
 										selected.type === 'task' &&
@@ -1840,10 +1856,24 @@
 											</form>
 										</td>
 									{:else}
+										<!-- ------- task title ------ -->
 										<td>
 											{task.title}
 											{#if recentlyAddedTaskId === task.id}
 												<span class="new-badge">New</span>
+											{/if}
+										</td>
+
+										<!-- ------- task assigned to ------ -->
+										<td>
+											{#if task.assigned_to}
+												{#if userMap[task.assigned_to]}
+													{getInitials(userMap[task.assigned_to])}
+												{:else}
+													{task.assigned_to}
+												{/if}
+											{:else}
+												—
 											{/if}
 										</td>
 
@@ -1881,7 +1911,7 @@
 									{/if}
 								</tr>
 
-								<!-- Insert form row (Task) -->
+								<!-- insert form row (task) -->
 								{#if insertingAtIndex === i}
 									<tr class="insert-form-row" bind:this={insertRowEl}>
 										<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -2041,6 +2071,16 @@
 																style="margin-right:0.3em;">❌</button
 															>
 														{/if}
+
+														<select bind:value={editSubtaskAssignedTo} style="margin-right:0.5em;">
+															<option value="">Unassigned</option>
+															{#each members as m}
+																{#if m.user_id}
+																	<option value={m.user_id}>{m.email}</option>
+																{/if}
+															{/each}
+														</select>
+
 														<button
 															type="submit"
 															disabled={savingSubtaskEdit || !editSubtaskContent.trim()}
@@ -2059,9 +2099,20 @@
 														<span class="new-badge">New</span>
 													{/if}
 												</td>
+
 												<td class="date-cell">
 													{#if subtask.due_date}
 														{formatDate(subtask.due_date)}
+													{/if}
+												</td>
+
+												<td class="edited-by">
+													{#if subtask.last_edited_by && userMap[subtask.last_edited_by]}
+														<span title={userMap[subtask.last_edited_by]}>
+															{getInitials(userMap[subtask.last_edited_by])}
+														</span>
+													{:else}
+														—
 													{/if}
 												</td>
 											{/if}
@@ -2100,6 +2151,16 @@
 																style="margin-right:0.3em;">❌</button
 															>
 														{/if}
+
+														<select bind:value={newSubtaskAssignedTo} style="margin-right:0.5em;">
+															<option value="">Unassigned</option>
+															{#each members as m}
+																{#if m.user_id}
+																	<option value={m.user_id}>{m.email}</option>
+																{/if}
+															{/each}
+														</select>
+
 														<button
 															type="submit"
 															disabled={creatingSubtask || !newSubtaskContent.trim()}
@@ -2114,6 +2175,8 @@
 											</tr>
 										{/if}
 									{/each}
+
+									<!-- Add Subtasks button add subtask -->
 									{#if insertingSubtaskAt && insertingSubtaskAt.taskId === task.id && task.subtasks.length === 0}
 										<tr class="subtask-insert-row" bind:this={insertSubtaskRowEl}>
 											<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -2148,6 +2211,16 @@
 															style="margin-right:0.3em;">❌</button
 														>
 													{/if}
+
+													<select bind:value={newSubtaskAssignedTo} style="margin-right:0.5em;">
+														<option value="">Unassigned</option>
+														{#each members as m}
+															{#if m.user_id}
+																<option value={m.user_id}>{m.email}</option>
+															{/if}
+														{/each}
+													</select>
+
 													<button
 														type="submit"
 														disabled={creatingSubtask || !newSubtaskContent.trim()}
