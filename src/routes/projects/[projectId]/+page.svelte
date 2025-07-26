@@ -94,6 +94,12 @@
 	let removingItemId: string | null = null;
 	let editTaskSelectedItemIds: string[] = []; // for editing tasks
 	let newTaskSelectedItemIds: string[] = []; // for creating tasks
+	let savingItems = false;
+	let showAllItems = false;
+
+	function toggleShowAllItems() {
+		showAllItems = !showAllItems;
+	}
 
 	async function fetchItems() {
 		if (!projectId) {
@@ -193,6 +199,53 @@
 			return [];
 		}
 		return data ? data.map((row) => row.item_id) : [];
+	}
+
+	async function handleRightPaneItemsChange(newIds: string[]) {
+		if (!selectedTask) return;
+		savingItems = true;
+
+		// 1. Remove all previous links for this task
+		await supabase.from('task_items').delete().eq('task_id', selectedTask.id);
+
+		// 2. Insert new links (if any)
+		if (newIds.length > 0) {
+			const links = newIds.map((item_id) => ({
+				task_id: selectedTask.id,
+				item_id,
+				project_id: projectId,
+				created_by: sessionValue?.user.id
+			}));
+			const { error: linkError } = await supabase.from('task_items').insert(links);
+			if (linkError) {
+				alert('Error updating items: ' + linkError.message);
+			}
+		}
+
+		// 3. Refetch local links for UI
+		await fetchTaskItems();
+
+		savingItems = false;
+	}
+
+	// Get the currently selected task's item IDs (for right pane), null if not a task, otherwise array of item IDs
+	$: selectedTaskItemIds = selectedTask
+		? taskItems.filter((link) => link.task_id === selectedTask.id).map((link) => link.item_id)
+		: [];
+
+	// --- Compute missing and present items for selected task (right pane)
+	$: selectedTaskItems = selectedTask ? (taskIdToItems[selectedTask.id] ?? []) : [];
+	$: missingItems = selectedTaskItems.filter((item) => item.status === 'not_present');
+	$: presentItems = selectedTaskItems.filter((item) => item.status === 'present');
+	$: currentTaskItems = selectedTask ? (taskIdToItems[selectedTask.id] ?? []) : [];
+
+	$: missingItemsSummary = items.filter(
+		(i) => selectedTaskItemIds.includes(i.id) && i.status === 'not_present'
+	);
+
+	// Reset expanded items list view when switching selection
+	$: if (selected) {
+		showAllItems = false;
 	}
 
 	// -----------------------------------------------------------------------------------------------------.
@@ -447,6 +500,7 @@
 		sort_index: number;
 		created_at: string;
 		updated_at: string;
+		created_by_email: string;
 		assigned_to?: string | null;
 		last_edited_by?: string | null;
 	};
@@ -1145,7 +1199,7 @@
 		await fetchTaskItems();
 
 		// Always fetch tasks after insert to ensure no UI duplication issues
-		await fetchTasks();
+		//await fetchTasks();
 
 		recentlyAddedTaskId = inserted.id;
 		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
@@ -1435,6 +1489,7 @@
 						sort_index,
 						owner_id: sessionValue.user.id,
 						last_edited_by: sessionValue.user.id,
+						created_by_email: sessionValue.user.email,
 						assigned_to: newSubtaskAssignedTo || null
 					}
 				])
@@ -1843,7 +1898,7 @@
 				{:else if errorTasks}
 					<p style="color:red;">{errorTasks}</p>
 				{:else if tasks.length === 0}
-					<!-- NEW: Add First Task UI when no tasks exist -->
+					<!-- add first task new task when no tasks exist -->
 					<div style="margin:2em 0;">
 						<button
 							class="toolbar-btn"
@@ -1889,6 +1944,13 @@
 										{/if}
 									{/each}
 								</select>
+
+								<!-- ---------- items checklist --------- -->
+								<ItemChecklist
+									{items}
+									selectedIds={editTaskSelectedItemIds}
+									onChange={(ids) => (editTaskSelectedItemIds = ids)}
+								/>
 
 								<button type="submit" disabled={creating || !newTitle.trim()}>
 									{creating ? 'Adding…' : 'Insert Task'}
@@ -2032,12 +2094,12 @@
 													{/each}
 												</select>
 
-												<!-- Insert checklist here -->
-												<ItemChecklist
+												<!-- ---------- items checklist --------- -->
+												<!-- <ItemChecklist
 													{items}
 													selectedIds={editTaskSelectedItemIds}
 													onChange={(ids) => (editTaskSelectedItemIds = ids)}
-												/>
+												/> -->
 
 												<button type="submit" disabled={savingEdit || !editTitle.trim()}
 													>Save</button
@@ -2153,7 +2215,7 @@
 													{/each}
 												</select>
 
-												<!-- Insert checklist here -->
+												<!-- ---------- items checklist --------- -->
 												<ItemChecklist
 													{items}
 													selectedIds={newTaskSelectedItemIds}
@@ -2468,8 +2530,122 @@
 		<aside class="right-pane">
 			{#if selected}
 				<div class="details-pane">
+					<!-- ----- Creator Info created by ------ -->
+					{#if selected.type === 'task' && selectedTask}
+						<div class="created-by-line">
+							Created by:
+							{#if selectedTask.created_by_email}
+								<span title={selectedTask.created_by_email}>
+									{selectedTask.created_by_email === sessionValue?.user?.email
+										? 'You'
+										: getInitials(selectedTask.created_by_email)}
+								</span>
+							{:else}
+								—
+							{/if}
+						</div>
+					{:else if selected.type === 'subtask' && selectedSubtask}
+						<div class="created-by-line">
+							Created by:
+							{#if selectedSubtask.created_by_email}
+								<span title={selectedSubtask.created_by_email}>
+									{selectedSubtask.created_by_email === sessionValue?.user?.email
+										? 'You'
+										: getInitials(selectedSubtask.created_by_email)}
+								</span>
+							{:else}
+								—
+							{/if}
+						</div>
+					{/if}
+
+					<!-- ----------- task description (only for tasks) ----------- -->
+					{#if selected.type === 'task' && selectedTask}
+						<div class="task-description-block" style="margin: 0.7em 0 0.7em 0;">
+							<b>Description:</b>
+							{#if selectedTask.description?.trim()}
+								<span style="margin-left: 0.5em;">{selectedTask.description}</span>
+							{:else}
+								<span style="color:#888; margin-left:0.5em;">(No description provided)</span>
+							{/if}
+						</div>
+					{/if}
+
+					<!-- ----------- task items (only for tasks) ----------- -->
+					{#if selected.type === 'task' && selectedTask}
+						<div class="task-items-block" style="margin:0.7em 0;">
+							<b>Items required for this task:</b>
+
+							{#if items.length === 0}
+								<!-- No project-level items at all -->
+								<span style="color:#888;">No items defined for this project.</span>
+							{:else if showAllItems}
+								<!-- Show full checklist when expanded, regardless of selected items -->
+								<ItemChecklist
+									{items}
+									selectedIds={selectedTaskItemIds}
+									disabled={savingItems}
+									showStatus={true}
+									onChange={handleRightPaneItemsChange}
+								/>
+								{#if selectedTaskItemIds.length === 0}
+									<span style="color:#888; margin-left:0.8em;">
+										No items are currently required for this task. Click button below to add
+										requirements.
+									</span>
+								{/if}
+								<button
+									class="expand-items-btn"
+									style="margin-top:0.4em;"
+									on:click={toggleShowAllItems}
+								>
+									Hide details
+								</button>
+								{#if savingItems}
+									<span style="color:#888; margin-left:0.8em;">Saving…</span>
+								{/if}
+							{:else}
+								<!-- Collapsed (summary) view -->
+								{#if selectedTaskItemIds.length === 0}
+									<!-- There ARE project items, but this task doesn't require any -->
+									<span style="color:#888; margin-left:0.8em;">
+										No items are currently required for this task. Click button below to add
+										requirements.
+									</span>
+								{:else if missingItemsSummary.length > 0}
+									<ul class="task-items-summary-list" style="margin:0.7em 0;">
+										{#each missingItemsSummary as item}
+											<li>
+												<span
+													class="status-dot"
+													style="background:#e74c3c; border-color:#aaa; width:0.9em; height:0.9em; border-radius:50%; display:inline-block; margin-right:0.4em;"
+												></span>
+												{item.name}
+											</li>
+										{/each}
+									</ul>
+									<span style="color:#e74c3c; margin-left:0.4em;">
+										{missingItemsSummary.length} required item{missingItemsSummary.length > 1
+											? 's are'
+											: ' is'} missing.
+									</span>
+								{:else}
+									<!-- There ARE project items, this task requires some, and none are missing -->
+									<span style="color:#47e37a;">✔ All required items are present.</span>
+								{/if}
+								<button
+									class="expand-items-btn"
+									style="margin-top:0.4em;"
+									on:click={toggleShowAllItems}
+								>
+									Show all items
+								</button>
+							{/if}
+						</div>
+					{/if}
+
 					<!-- Contextual Header -->
-					{#if selected.type === 'task'}
+					<!-- {#if selected.type === 'task'}
 						<div class="comments-context">
 							<b>Comments for task:</b>
 							<span style="font-family:monospace;"
@@ -2483,7 +2659,7 @@
 								>{selectedSubtask?.content ?? selectedSubtask?.short_id ?? ''}</span
 							>
 						</div>
-					{/if}
+					{/if} -->
 
 					<!-- -------- Comments Section ------- -->
 					<section class="comments-section">
@@ -3253,10 +3429,10 @@
 	.subtask-row {
 		background: #f7faff;
 	}
-	.subtask-indent {
+	/* .subtask-indent {
 		display: inline-block;
 		width: 2em;
-	}
+	} */
 	.date-cell {
 		text-align: right;
 		font-variant-numeric: tabular-nums;
@@ -3283,11 +3459,11 @@
 		color: #bbb;
 		cursor: default;
 	}
-	.created-by {
+	/* .created-by {
 		color: #888;
 		font-size: 0.97em;
 		font-style: italic;
-	}
+	} */
 	.panel-overlay {
 		position: fixed;
 		inset: 0;
