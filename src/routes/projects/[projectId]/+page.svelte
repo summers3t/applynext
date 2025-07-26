@@ -15,15 +15,14 @@
 		email: string;
 		role: string;
 		status: string;
-		invited_email?: string | null; // <-- ADD THIS
+		invited_email?: string | null;
 	};
 	type Project = {
 		id: string;
 		name: string;
 		description: string | null;
 		deadline: string | null;
-		created_by: string; // <-- ADD THIS LINE
-		// ...any other fields you have
+		created_by: string; //
 	};
 
 	type MemberRow = {
@@ -44,6 +43,17 @@
 		created_at: string;
 	};
 
+	type Comment = {
+		id: string;
+		project_id: string;
+		task_id: string | null;
+		subtask_id: string | null;
+		user_id: string;
+		content: string;
+		created_at: string;
+		updated_at: string;
+	};
+
 	let projectId = '';
 	$: projectId = page.params.projectId;
 
@@ -57,12 +67,22 @@
 	let pendingCenterMainScroll: number | null = null;
 
 	// -----------------------------------------------------------------------------------------------------.
-	// For Edited by feature.
+	// For comments feature.
+	// -----------------------------------------------------------------------------------------------------.
+	let comments: Comment[] = [];
+	let loadingComments = false;
+	let errorComments = '';
+	//let newCommentContent = '';
+	let newCommentText = '';
+	let addingComment = false;
+
+	// -----------------------------------------------------------------------------------------------------.
+	// For edited by feature.
 	// -----------------------------------------------------------------------------------------------------.
 	let userMap: Record<string, string> = {};
 
 	// -----------------------------------------------------------------------------------------------------.
-	// "Items" feature.
+	// For items feature.
 	// -----------------------------------------------------------------------------------------------------.
 
 	let items: Item[] = [];
@@ -174,6 +194,59 @@
 		}
 		return data ? data.map((row) => row.item_id) : [];
 	}
+
+	// -----------------------------------------------------------------------------------------------------.
+	// Comments feature comments.
+	// -----------------------------------------------------------------------------------------------------.
+	async function fetchComments({
+		taskId = null,
+		subtaskId = null
+	}: {
+		taskId?: string | null;
+		subtaskId?: string | null;
+	}) {
+		if (!projectId) {
+			comments = [];
+			loadingComments = false;
+			return;
+		}
+		loadingComments = true;
+		errorComments = '';
+		let query = supabase.from('comments').select('*').eq('project_id', projectId);
+
+		if (taskId) {
+			query = query.eq('task_id', taskId).is('subtask_id', null);
+		} else if (subtaskId) {
+			query = query.eq('subtask_id', subtaskId);
+		} else {
+			// No task or subtask selected
+			comments = [];
+			loadingComments = false;
+			return;
+		}
+
+		const { data, error } = await query.order('created_at', { ascending: true });
+
+		if (error) {
+			errorComments = error.message;
+			comments = [];
+		} else {
+			comments = data ?? [];
+		}
+		loadingComments = false;
+	}
+
+	// Find the selected task (for right pane context)
+	$: selectedTask =
+		selected && selected.type === 'task' ? tasks.find((t) => t.id === selected?.id) : null;
+
+	// Find the selected subtask (and its parent) if needed
+	$: selectedSubtask =
+		selected && selected.type === 'subtask'
+			? (tasks.find((t) => t.id === selected?.parentTaskId)?.subtasks ?? []).find(
+					(st) => st.id === selected?.id
+				)
+			: null;
 
 	// -----------------------------------------------------------------------------------------------------.
 	// General stay at the same row after edit.
@@ -424,6 +497,8 @@
 	let editStatus: Status = 'open';
 	let editDueDate: string | null = null;
 	let savingEdit = false;
+	let newTaskAssignedTo: string = '';
+	let editAssignedTo = '';
 
 	// Subtask
 	let insertingSubtaskAt: { taskId: string; index: number } | null = null;
@@ -502,6 +577,14 @@
 		if (parts.length !== 3) return dateStr;
 		return `${parts[2]}.${parts[1]}.${parts[0]}`;
 	}
+
+	function formatDateTime(dateStr: string | null | undefined): string {
+		if (!dateStr) return '';
+		const date = new Date(dateStr);
+		const pad = (n: number) => n.toString().padStart(2, '0');
+		return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+	}
+
 	function isOverdue(due_date: string | null, status: Status): boolean {
 		if (!due_date || status === 'done') return false;
 		const today = new Date();
@@ -844,21 +927,41 @@
 		});
 
 		// --- 1. Gather all unique last_edited_by user IDs (for both tasks and subtasks) ---
+		// const userIdsFromTasks = tasks.map((t) => t.last_edited_by).filter((id) => !!id);
+		// const userIdsFromSubtasks = tasks.flatMap((t) =>
+		// 	Array.isArray(t.subtasks)
+		// 		? t.subtasks.map((st) => st.last_edited_by).filter((id) => !!id)
+		// 		: []
+		// );
+
+		// const allEditedByIds = Array.from(new Set([...userIdsFromTasks, ...userIdsFromSubtasks]));
+
+		// --- 1. Gather all user IDs for assigned_to and last_edited_by (tasks and subtasks)
 		const userIdsFromTasks = tasks.map((t) => t.last_edited_by).filter((id) => !!id);
 		const userIdsFromSubtasks = tasks.flatMap((t) =>
 			Array.isArray(t.subtasks)
 				? t.subtasks.map((st) => st.last_edited_by).filter((id) => !!id)
 				: []
 		);
-
-		const allEditedByIds = Array.from(new Set([...userIdsFromTasks, ...userIdsFromSubtasks]));
+		const assigneeIdsFromTasks = tasks.map((t) => t.assigned_to).filter((id) => !!id);
+		const assigneeIdsFromSubtasks = tasks.flatMap((t) =>
+			Array.isArray(t.subtasks) ? t.subtasks.map((st) => st.assigned_to).filter((id) => !!id) : []
+		);
+		const allUserIds = Array.from(
+			new Set([
+				...userIdsFromTasks,
+				...userIdsFromSubtasks,
+				...assigneeIdsFromTasks,
+				...assigneeIdsFromSubtasks
+			])
+		);
 
 		// --- 2. Fetch user emails and build the userMap ---
-		if (allEditedByIds.length > 0) {
+		if (allUserIds.length > 0) {
 			const { data: users, error } = await supabase
 				.from('user_emails')
 				.select('id, email')
-				.in('id', allEditedByIds);
+				.in('id', allUserIds);
 
 			if (error) {
 				console.error('Error loading user emails:', error.message);
@@ -946,6 +1049,7 @@
 	async function createTask(atIndex: number | null = null) {
 		if (!canEditTasks() || !newTitle.trim() || !sessionValue) return;
 		creating = true;
+		const wasEmpty = tasks.length === 0;
 		let sort_index = tasks.length;
 		const taskData = {
 			project_id: projectId,
@@ -956,7 +1060,8 @@
 			sort_index,
 			owner_id: sessionValue.user.id,
 			created_by_email: sessionValue.user.email,
-			last_edited_by: sessionValue.user.id
+			last_edited_by: sessionValue.user.id,
+			assigned_to: newTaskAssignedTo && newTaskAssignedTo.trim() !== '' ? newTaskAssignedTo : null
 		};
 		let inserted;
 
@@ -989,6 +1094,28 @@
 			}
 			inserted = data[0];
 			tasks = [...tasks, inserted];
+
+			tasks = tasks.map((task) => ({ ...task }));
+
+			const insertedUserIds = [inserted.assigned_to, inserted.last_edited_by].filter(
+				Boolean
+			) as string[];
+
+			// --- Ensure userMap includes the assignee for first task ---
+			if (wasEmpty && insertedUserIds.length > 0) {
+				const { data: users, error } = await supabase
+					.from('user_emails')
+					.select('id, email')
+					.in('id', insertedUserIds);
+				if (!error && users) {
+					for (const u of users) {
+						userMap[u.id] = u.email;
+					}
+				} else if (error) {
+					console.error('Failed to fetch user emails after first task insertion:', error.message);
+				}
+				userMap = { ...userMap };
+			}
 		}
 
 		// --- Add links to items for this task ---
@@ -1004,7 +1131,7 @@
 			const links = newTaskSelectedItemIds.map((item_id) => ({
 				task_id: inserted.id,
 				item_id,
-				project_id: projectId, // << YOU NEED TO INCLUDE THIS FIELD!
+				project_id: projectId,
 				created_by: sessionValue?.user.id
 			}));
 			const { error: linkError } = await supabase.from('task_items').insert(links);
@@ -1017,6 +1144,9 @@
 
 		await fetchTaskItems();
 
+		// Always fetch tasks after insert to ensure no UI duplication issues
+		await fetchTasks();
+
 		recentlyAddedTaskId = inserted.id;
 		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
 		newBadgeTimeout = setTimeout(() => {
@@ -1025,11 +1155,13 @@
 
 		pendingScrollTarget = { type: 'task', id: inserted.id };
 
+		// Reset form state
 		newTitle = '';
 		newDescription = '';
 		newStatus = 'open';
 		newDueDate = null;
 		insertingAtIndex = null;
+		newTaskAssignedTo = '';
 	}
 
 	function showInsertFormAt(idx: number) {
@@ -1134,19 +1266,21 @@
 		}
 	}
 
-	function selectTask(taskId: string) {
+	async function selectTask(taskId: string) {
 		selected = { type: 'task', id: taskId };
 		insertingAtIndex = null;
 		editingTaskId = null;
 		insertingSubtaskAt = null;
 		editingSubtaskId = null;
+		await fetchComments({ taskId });
 	}
-	function selectSubtask(subtaskId: string, taskId: string) {
+	async function selectSubtask(subtaskId: string, taskId: string) {
 		selected = { type: 'subtask', id: subtaskId, parentTaskId: taskId };
 		insertingAtIndex = null;
 		editingTaskId = null;
 		insertingSubtaskAt = null;
 		editingSubtaskId = null;
+		await fetchComments({ subtaskId });
 	}
 
 	// ---- Inline Edit ----
@@ -1166,6 +1300,7 @@
 			insertingAtIndex = null;
 			insertingSubtaskAt = null;
 			editingSubtaskId = null;
+			editAssignedTo = task.assigned_to || '';
 
 			editTaskSelectedItemIds = await fetchTaskItemLinks(task.id);
 			console.log('[DEBUG] Selected items for editing:', editTaskSelectedItemIds);
@@ -1203,6 +1338,9 @@
 			pendingCenterMainScroll = centerMainEl.scrollTop;
 		}
 
+		const sanitizedAssignedTo =
+			editAssignedTo && editAssignedTo.trim() !== '' ? editAssignedTo : null;
+
 		const { error: err } = await supabase
 			.from('tasks')
 			.update({
@@ -1210,10 +1348,12 @@
 				description: editDescription.trim(),
 				status: editStatus,
 				due_date: editDueDate,
-				last_edited_by: sessionValue?.user?.id
+				last_edited_by: sessionValue?.user?.id,
+				assigned_to: sanitizedAssignedTo
 			})
 			.eq('id', editingTaskId)
 			.eq('project_id', projectId);
+
 		savingEdit = false;
 		if (err) {
 			alert('Error saving task: ' + err.message);
@@ -1236,7 +1376,7 @@
 			const links = editTaskSelectedItemIds.map((item_id) => ({
 				task_id: editingTaskId,
 				item_id,
-				project_id: projectId, // << YOU NEED TO INCLUDE THIS FIELD!
+				project_id: projectId,
 				created_by: sessionValue?.user.id
 			}));
 			const { error: linkError } = await supabase.from('task_items').insert(links);
@@ -1414,6 +1554,38 @@
 		}
 
 		editingSubtaskId = null;
+	}
+
+	// -------------- Comments logic comments --------------
+	async function addComment() {
+		if (!selected || !newCommentText.trim() || addingComment) return;
+		addingComment = true;
+
+		let commentPayload: any = {
+			content: newCommentText.trim(),
+			created_at: new Date().toISOString(),
+			user_id: sessionValue?.user?.id,
+			project_id: projectId
+		};
+
+		if (selected.type === 'task') {
+			commentPayload.task_id = selected.id;
+		}
+		if (selected.type === 'subtask') {
+			commentPayload.subtask_id = selected.id;
+		}
+
+		const { error } = await supabase.from('comments').insert([commentPayload]);
+
+		addingComment = false;
+		if (error) {
+			alert('Error adding comment: ' + error.message);
+			return;
+		}
+		newCommentText = '';
+		// Re-fetch comments
+		if (selected.type === 'task') await fetchComments({ taskId: selected.id });
+		if (selected.type === 'subtask') await fetchComments({ subtaskId: selected.id });
 	}
 
 	// ---- Expand/collapse logic ----
@@ -1708,6 +1880,16 @@
 										style="margin-right:0.3em;">❌</button
 									>
 								{/if}
+
+								<select bind:value={newTaskAssignedTo} style="margin-right:0.5em;">
+									<option value="">Unassigned</option>
+									{#each members as m}
+										{#if m.user_id}
+											<option value={m.user_id}>{m.email}</option>
+										{/if}
+									{/each}
+								</select>
+
 								<button type="submit" disabled={creating || !newTitle.trim()}>
 									{creating ? 'Adding…' : 'Insert Task'}
 								</button>
@@ -1840,6 +2022,16 @@
 													>
 												{/if}
 
+												<!-- ------ Assign to assign -------- -->
+												<select bind:value={editAssignedTo} style="margin-right:0.5em;">
+													<option value="">Unassigned</option>
+													{#each members as m}
+														{#if m.user_id}
+															<option value={m.user_id}>{m.email}</option>
+														{/if}
+													{/each}
+												</select>
+
 												<!-- Insert checklist here -->
 												<ItemChecklist
 													{items}
@@ -1868,9 +2060,11 @@
 										<td>
 											{#if task.assigned_to}
 												{#if userMap[task.assigned_to]}
-													{getInitials(userMap[task.assigned_to])}
+													<span title={userMap[task.assigned_to]}>
+														{getInitials(userMap[task.assigned_to])}
+													</span>
 												{:else}
-													{task.assigned_to}
+													<span title="User not found">{task.assigned_to}</span>
 												{/if}
 											{:else}
 												—
@@ -1903,7 +2097,9 @@
 										</td>
 										<td class="edited-by">
 											{#if task.last_edited_by && userMap[task.last_edited_by]}
-												{getInitials(userMap[task.last_edited_by])}
+												<span title={userMap[task.last_edited_by]}>
+													{getInitials(userMap[task.last_edited_by])}
+												</span>
 											{:else}
 												—
 											{/if}
@@ -1948,6 +2144,15 @@
 													>
 												{/if}
 
+												<select bind:value={newTaskAssignedTo} style="margin-right:0.5em;">
+													<option value="">Unassigned</option>
+													{#each members as m}
+														{#if m.user_id}
+															<option value={m.user_id}>{m.email}</option>
+														{/if}
+													{/each}
+												</select>
+
 												<!-- Insert checklist here -->
 												<ItemChecklist
 													{items}
@@ -1979,11 +2184,13 @@
 											on:click={() => selectSubtask(subtask.id, task.id)}
 											on:dblclick={startEdit}
 										>
+											<td></td>
 											<!-- <td><span class="subtask-indent"></span></td> -->
 
 											<!-- Subtask ID subtask id (only if expanded) -->
 											<td class="short-id">{subtask.short_id}</td>
 
+											<!-- --------------- Subtask status dot ----------- -->
 											<td style="position: relative;">
 												<!-- Subtask status dot (now as button for accessibility) -->
 												<button
@@ -2092,11 +2299,26 @@
 													</form>
 												</td>
 											{:else}
-												<td></td>
+												<!-- <td></td> -->
 												<td>
 													{subtask.content}
 													{#if subtask.id === recentlyAddedSubtaskId}
 														<span class="new-badge">New</span>
+													{/if}
+												</td>
+
+												<!-- Subtask assigned to -->
+												<td>
+													{#if subtask.assigned_to}
+														{#if userMap[subtask.assigned_to]}
+															<span title={userMap[subtask.assigned_to]}>
+																{getInitials(userMap[subtask.assigned_to])}
+															</span>
+														{:else}
+															<span title="User not found">{subtask.assigned_to}</span>
+														{/if}
+													{:else}
+														—
 													{/if}
 												</td>
 
@@ -2242,9 +2464,70 @@
 			</div>
 		</div>
 
-		<!-- Right side pane right -->
+		<!-- --------------- Right side pane right pane ------------- -->
 		<aside class="right-pane">
-			<!-- (empty for now) -->
+			{#if selected}
+				<div class="details-pane">
+					<!-- Contextual Header -->
+					{#if selected.type === 'task'}
+						<div class="comments-context">
+							<b>Comments for task:</b>
+							<span style="font-family:monospace;"
+								>{selectedTask?.title ?? selectedTask?.short_id ?? ''}</span
+							>
+						</div>
+					{:else if selected.type === 'subtask'}
+						<div class="comments-context">
+							<b>Comments for subtask:</b>
+							<span style="font-family:monospace;"
+								>{selectedSubtask?.content ?? selectedSubtask?.short_id ?? ''}</span
+							>
+						</div>
+					{/if}
+
+					<!-- -------- Comments Section ------- -->
+					<section class="comments-section">
+						<h4>Comments</h4>
+						{#if loadingComments}
+							<p>Loading…</p>
+						{:else if comments.length === 0}
+							<p style="color:#888;">No comments yet.</p>
+						{:else}
+							<ul class="comments-list">
+								{#each comments as comment}
+									<li class="comment-row">
+										<span class="comment-initials">
+											{getInitials(userMap[comment.user_id] ?? 'U')}
+										</span>
+										<span class="comment-meta">
+											<span class="comment-author">{userMap[comment.user_id] ?? 'Unknown'}</span>
+											<span class="comment-time">{formatDateTime(comment.created_at)}</span>
+										</span>
+										<div class="comment-text">{comment.content}</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+
+						<!-- --- Add Comment Input --- -->
+						<form
+							on:submit|preventDefault={addComment}
+							style="margin-top: 1em; display:flex; gap:0.7em;"
+						>
+							<textarea
+								bind:value={newCommentText}
+								placeholder="Write a comment…"
+								required
+								rows="2"
+								style="flex:1;resize:vertical;"
+							></textarea>
+							<button type="submit" disabled={addingComment || !newCommentText.trim()}>
+								{addingComment ? 'Adding…' : 'Add'}
+							</button>
+						</form>
+					</section>
+				</div>
+			{/if}
 		</aside>
 
 		<!-- Members panel members -->
