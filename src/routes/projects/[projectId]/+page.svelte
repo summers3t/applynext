@@ -2529,6 +2529,7 @@
 		<!-- --------------- Right side pane right pane ------------- -->
 		<aside class="right-pane">
 			{#if selected}
+				<div class="right-pane-inner"></div>
 				<div class="details-pane">
 					<!-- ----- Creator Info created by ------ -->
 					{#if selected.type === 'task' && selectedTask}
@@ -2989,6 +2990,13 @@
 </div>
 
 <style>
+	:root {
+		--app-scale: 0.86;
+	}
+	.project-page-layout {
+		font-size: calc(1rem * var(--app-scale));
+	}
+
 	/* Main pain, containing all other panes */
 	.project-page-layout {
 		display: flex;
@@ -3007,21 +3015,9 @@
 		gap: 0.5em; /* This prevents panes from visually colliding/overlapping */
 	}
 
-	/* .left-pane,
-	.center-pane,
-	.right-pane {
-		border-radius: 1.2em;
-		box-shadow: 0 4px 28px 0 #0001; */
-	/* Shared glass base */
-	/* background: rgba(255, 255, 255, 0.74);
-		backdrop-filter: blur(22px) saturate(1.3);
-		-webkit-backdrop-filter: blur(22px) saturate(1.3);
-		border: 1.5px solid rgba(180, 200, 230, 0.13);
-	} */
-
 	/* Left Pane */
 	.left-pane {
-		width: 285px;
+		width: 225px;
 		min-width: 210px;
 		max-width: 340px;
 		display: flex;
@@ -3043,24 +3039,14 @@
 		border: 1.5px solid rgba(180, 200, 230, 0.13);
 	}
 
-	/* .left-pane,
-	.center-pane,
-	.right-pane {
-		border-radius: 1.2em;
-		box-shadow: 0 4px 28px 0 #0001; */
-	/* Shared glass base */
-	/* background: rgba(255, 255, 255, 0.74);
-		backdrop-filter: blur(22px) saturate(1.3);
-		-webkit-backdrop-filter: blur(22px) saturate(1.3);
-		border: 1.5px solid rgba(180, 200, 230, 0.13);
-	} */
-
 	/* Center Pane */
 	.center-pane {
 		flex: 1 1 0%;
+		/* flex: 1 1 350px; */
 		display: flex;
 		flex-direction: column;
-		min-width: 0;
+		min-width: 400px;
+		max-width: 4000px;
 		padding: 1em 0;
 		margin: 1em 0;
 		box-sizing: border-box;
@@ -3118,21 +3104,27 @@
 		border-radius: 8px;
 	}
 
-	/* Right Pane */
+	/* right pane */
 	.right-pane {
-		width: 250px;
-		min-width: 140px;
-		max-width: 320px;
-		margin: 2em 2em 2em 0;
+		width: 480px; /* doubled from 250px */
+		min-width: 340px; /* increased for comfort */
+		max-width: 680px; /* so it never gets TOO wide */
+		height: calc(100% - 2em);
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-start;
+		margin: 1em 2em 2em 0;
 		background: transparent;
-		/* border: 1px dashed #eee;  Uncomment to see the right pane’s border */
 		box-sizing: border-box;
-		/* border-radius: 1.2em;
+		/* You may want to restore the border, glass, and shadow effects! */
+		border-radius: 1.2em;
 		box-shadow: 0 4px 28px 0 #0001;
 		background: rgba(255, 255, 255, 0.74);
-		backdrop-filter: blur(22px) saturate(1.3);
-		-webkit-backdrop-filter: blur(22px) saturate(1.3);
-		border: 1.5px solid rgba(180, 200, 230, 0.13); */
+		backdrop-filter: blur(4px) saturate(1.3);
+		-webkit-backdrop-filter: blur(4px) saturate(1.3);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
+		border: 1.5px solid rgba(180, 200, 230, 0.13);
+		padding: 1.1em 1.5em; /* Match other panes */
 	}
 
 	/* Toolbar and button effects */
@@ -3438,7 +3430,7 @@
 		font-variant-numeric: tabular-nums;
 		font-size: 0.97em;
 		color: #2c3566;
-		min-width: 8em;
+		min-width: 6em;
 	}
 	.insert-form-row td,
 	.subtask-insert-row td {

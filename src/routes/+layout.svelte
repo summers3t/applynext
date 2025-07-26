@@ -149,19 +149,26 @@
 {/if}
 
 <style>
+	:root {
+		--app-scale: 0.86;
+	}
+	.top-bar {
+		font-size: calc(1rem * var(--app-scale));
+	}
+
 	.top-bar {
 		width: 100vw;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 1em 2em;
+		padding: 0.1em 0.1em;
 		background: #f5f7fc;
 		border-bottom: 1px solid #e1e3ec;
 		position: sticky;
 		top: 0;
 		z-index: 100;
 		box-sizing: border-box;
-		min-height: 3.2em;
+		min-height: 0.2em;
 	}
 	.top-bar .left {
 		font-size: 1.22em;
