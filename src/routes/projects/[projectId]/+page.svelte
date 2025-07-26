@@ -2529,12 +2529,19 @@
 		<!-- --------------- Right side pane right pane ------------- -->
 		<aside class="right-pane">
 			{#if selected}
-				<div class="right-pane-inner"></div>
-				<div class="details-pane">
-					<!-- ----- Creator Info created by ------ -->
+				<div class="right-pane-inner">
+					<!-- Section Header -->
+					<div class="section-header">
+						<span class="section-icon">📝</span>
+						<span class="section-title">
+							{selected.type === 'task' ? 'Task Details' : 'Subtask Details'}
+						</span>
+					</div>
+
+					<!-- Created by Block -->
 					{#if selected.type === 'task' && selectedTask}
 						<div class="created-by-line">
-							Created by:
+							<b>Created by:</b>
 							{#if selectedTask.created_by_email}
 								<span title={selectedTask.created_by_email}>
 									{selectedTask.created_by_email === sessionValue?.user?.email
@@ -2560,9 +2567,9 @@
 						</div>
 					{/if}
 
-					<!-- ----------- task description (only for tasks) ----------- -->
+					<!-- Task Description -->
 					{#if selected.type === 'task' && selectedTask}
-						<div class="task-description-block" style="margin: 0.7em 0 0.7em 0;">
+						<div class="task-description-block">
 							<b>Description:</b>
 							{#if selectedTask.description?.trim()}
 								<span style="margin-left: 0.5em;">{selectedTask.description}</span>
@@ -2572,16 +2579,13 @@
 						</div>
 					{/if}
 
-					<!-- ----------- task items (only for tasks) ----------- -->
+					<!-- Task Items Block -->
 					{#if selected.type === 'task' && selectedTask}
-						<div class="task-items-block" style="margin:0.7em 0;">
+						<div class="task-items-block">
 							<b>Items required for this task:</b>
-
 							{#if items.length === 0}
-								<!-- No project-level items at all -->
 								<span style="color:#888;">No items defined for this project.</span>
 							{:else if showAllItems}
-								<!-- Show full checklist when expanded, regardless of selected items -->
 								<ItemChecklist
 									{items}
 									selectedIds={selectedTaskItemIds}
@@ -2595,32 +2599,25 @@
 										requirements.
 									</span>
 								{/if}
-								<button
-									class="expand-items-btn"
-									style="margin-top:0.4em;"
-									on:click={toggleShowAllItems}
-								>
-									Hide details
-								</button>
+								<button class="expand-items-btn" on:click={toggleShowAllItems}>Hide details</button>
 								{#if savingItems}
 									<span style="color:#888; margin-left:0.8em;">Saving…</span>
 								{/if}
 							{:else}
-								<!-- Collapsed (summary) view -->
 								{#if selectedTaskItemIds.length === 0}
-									<!-- There ARE project items, but this task doesn't require any -->
 									<span style="color:#888; margin-left:0.8em;">
 										No items are currently required for this task. Click button below to add
 										requirements.
 									</span>
 								{:else if missingItemsSummary.length > 0}
-									<ul class="task-items-summary-list" style="margin:0.7em 0;">
+									<ul class="task-items-summary-list">
 										{#each missingItemsSummary as item}
 											<li>
 												<span
 													class="status-dot"
 													style="background:#e74c3c; border-color:#aaa; width:0.9em; height:0.9em; border-radius:50%; display:inline-block; margin-right:0.4em;"
-												></span>
+												>
+												</span>
 												{item.name}
 											</li>
 										{/each}
@@ -2631,38 +2628,19 @@
 											: ' is'} missing.
 									</span>
 								{:else}
-									<!-- There ARE project items, this task requires some, and none are missing -->
 									<span style="color:#47e37a;">✔ All required items are present.</span>
 								{/if}
-								<button
-									class="expand-items-btn"
-									style="margin-top:0.4em;"
-									on:click={toggleShowAllItems}
+								<button class="expand-items-btn" on:click={toggleShowAllItems}
+									>Show all items</button
 								>
-									Show all items
-								</button>
 							{/if}
 						</div>
 					{/if}
 
-					<!-- Contextual Header -->
-					<!-- {#if selected.type === 'task'}
-						<div class="comments-context">
-							<b>Comments for task:</b>
-							<span style="font-family:monospace;"
-								>{selectedTask?.title ?? selectedTask?.short_id ?? ''}</span
-							>
-						</div>
-					{:else if selected.type === 'subtask'}
-						<div class="comments-context">
-							<b>Comments for subtask:</b>
-							<span style="font-family:monospace;"
-								>{selectedSubtask?.content ?? selectedSubtask?.short_id ?? ''}</span
-							>
-						</div>
-					{/if} -->
+					<!-- Section Divider -->
+					<div class="section-divider"></div>
 
-					<!-- -------- Comments Section ------- -->
+					<!-- Comments Section -->
 					<section class="comments-section">
 						<h4>Comments</h4>
 						{#if loadingComments}
@@ -2686,7 +2664,7 @@
 							</ul>
 						{/if}
 
-						<!-- --- Add Comment Input --- -->
+						<!-- Add Comment Input -->
 						<form
 							on:submit|preventDefault={addComment}
 							style="margin-top: 1em; display:flex; gap:0.7em;"
@@ -2697,7 +2675,8 @@
 								required
 								rows="2"
 								style="flex:1;resize:vertical;"
-							></textarea>
+							>
+							</textarea>
 							<button type="submit" disabled={addingComment || !newCommentText.trim()}>
 								{addingComment ? 'Adding…' : 'Add'}
 							</button>
@@ -2991,10 +2970,10 @@
 
 <style>
 	:root {
-		--app-scale: 0.86;
+		--app-scale: 0.80;
 	}
 	.project-page-layout {
-		font-size: calc(1rem * var(--app-scale));
+		font-size: calc(1.1rem * var(--app-scale));
 	}
 
 	/* Main pain, containing all other panes */
@@ -3108,7 +3087,7 @@
 	.right-pane {
 		width: 480px; /* doubled from 250px */
 		min-width: 340px; /* increased for comfort */
-		max-width: 680px; /* so it never gets TOO wide */
+		max-width: 650px; /* so it never gets TOO wide */
 		height: calc(100% - 2em);
 		display: flex;
 		flex-direction: column;
@@ -3117,14 +3096,18 @@
 		background: transparent;
 		box-sizing: border-box;
 		/* You may want to restore the border, glass, and shadow effects! */
-		border-radius: 1.2em;
 		box-shadow: 0 4px 28px 0 #0001;
 		background: rgba(255, 255, 255, 0.74);
 		backdrop-filter: blur(4px) saturate(1.3);
 		-webkit-backdrop-filter: blur(4px) saturate(1.3);
 		border: 1.5px solid rgba(180, 200, 230, 0.13);
-		border: 1.5px solid rgba(180, 200, 230, 0.13);
+		border-radius: 1.2em;
 		padding: 1.1em 1.5em; /* Match other panes */
+		align-items: stretch;
+		overflow: visible;
+		position: relative;
+		min-height: 0;
+		z-index: 2;
 	}
 
 	/* Toolbar and button effects */
@@ -3546,5 +3529,228 @@
 		opacity: 0.7;
 		color: #555;
 		letter-spacing: 0.04em;
+	}
+
+	.right-pane-inner {
+		/* padding: 2em 1.4em 1.2em 1.7em; */
+		padding: 0.1em 0.1em 0.3em 0.3em;
+		display: flex;
+		flex-direction: column;
+		/* gap: 2.1em; */
+		gap: 0em;        /* Reduced vertical gap between blocks */
+		padding-bottom: 56.9em; /* optional, for less bottom white-space */
+		min-height: 100%;
+	}
+
+	/* Section Header */
+	.section-header {
+		display: flex;
+		align-items: center;
+		gap: 0.8em;
+		margin-bottom: 1em;
+		padding-bottom: 0.3em;
+		border-bottom: 1px solid #e3e8f8;
+		font-size: 1.18em;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+		background: none;
+	}
+
+	.section-icon {
+		font-size: 1.35em;
+		margin-right: 0.1em;
+		opacity: 0.82;
+	}
+
+	.section-title {
+		color: #2b3867;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		font-size: 1.1em;
+	}
+
+	/* Section Divider */
+	.section-divider {
+		height: 0em;
+		width: 94%;
+		border: none;
+		border-bottom: 2.5px dashed #e7eaf5;
+		margin: 0em 0 0em 0;
+		border-radius: 0.6em;
+		opacity: 0.72;
+		align-self: center;
+	}
+
+	/* Created By & Description Block */
+	.created-by-line {
+		font-size: 1em;
+		margin-bottom: 0.6em;
+		color: #3963b5;
+		background: #f5f8fd;
+		padding: 0.45em 1.1em;
+		border-radius: 1em;
+		display: inline-block;
+	}
+
+	.task-description-block {
+		background: #f6faff;
+		padding: 0.7em 1.1em;
+		border-radius: 0.9em;
+		font-size: 1em;
+		color: #444;
+		box-shadow: 0 1px 7px #c4e7ff1b;
+		margin: 0.8em 0;
+	}
+
+	.task-items-block {
+		background: #fafcff;
+		padding: 0.8em 1.1em;
+		border-radius: 1em;
+		box-shadow: 0 1px 6px #d6e2fa11;
+		margin-bottom: 1.1em;
+		font-size: 1em;
+	}
+
+	/* Checklist Buttons */
+	.expand-items-btn {
+		margin-top: 0.7em;
+		background: #e3edfc;
+		color: #1976d2;
+		border: none;
+		border-radius: 1.1em;
+		padding: 0.35em 1.2em;
+		font-size: 1em;
+		font-weight: 600;
+		box-shadow: 0 1px 5px #0001;
+		cursor: pointer;
+		transition:
+			background 0.13s,
+			color 0.12s;
+	}
+	.expand-items-btn:hover,
+	.expand-items-btn:focus {
+		background: #1976d2;
+		color: #fff;
+		outline: none;
+	}
+
+	/* Task Items List */
+	.task-items-summary-list {
+		padding-left: 1.2em;
+		margin: 0.7em 0 0.4em 0;
+	}
+	.task-items-summary-list li {
+		margin-bottom: 0.3em;
+		font-size: 0.99em;
+	}
+
+	.status-dot {
+		display: inline-block;
+		width: 1.1em;
+		height: 1.1em;
+		border-radius: 0.6em;
+		margin-right: 0.6em;
+		vertical-align: middle;
+		border: 2px solid #aaa;
+		box-sizing: border-box;
+		background: #fff;
+		border: 2px solid rgba(40, 100, 200, 0.18);
+		box-shadow: 0 0 6px #1976d233;
+	}
+
+	/* --- Comments --- */
+	.comments-section {
+		background: #f7fbff;
+		border-radius: 1em;
+		padding: 1em 1em 1.1em 1em;
+		box-shadow: 0 1px 7px #1976d214;
+		margin-top: 1.5em;
+	}
+	.comments-section h4 {
+		margin: 0 0 0.7em 0;
+		font-size: 1.09em;
+		font-weight: 600;
+		color: #2260a7;
+	}
+	.comments-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+	}
+	.comment-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.65em;
+		margin-bottom: 0.9em;
+		background: #fff;
+		border-radius: 0.7em;
+		padding: 0.55em 1em 0.42em 0.7em;
+		box-shadow: 0 0.5px 3.5px #1976d21a;
+	}
+	.comment-initials {
+		width: 2em;
+		height: 2em;
+		border-radius: 1em;
+		background: linear-gradient(135deg, #a9c9ff 0%, #f2fcfe 100%);
+		color: #1a3255;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		font-size: 1.01em;
+		margin-right: 0.2em;
+	}
+	.comment-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.18em;
+		min-width: 0;
+	}
+	.comment-author {
+		font-weight: 600;
+		color: #1e355d;
+	}
+	.comment-time {
+		font-size: 0.91em;
+		color: #888;
+	}
+	.comment-text {
+		margin-top: 0.18em;
+		font-size: 1em;
+		color: #333;
+		word-break: break-word;
+	}
+
+	.comments-section textarea {
+		font-size: 1em;
+		border-radius: 0.7em;
+		border: 1.5px solid #d7e6f5;
+		padding: 0.7em 1em;
+		box-shadow: 0 0.5px 2.5px #1976d211;
+		background: #fff;
+		transition: border 0.16s;
+		resize: vertical;
+	}
+	.comments-section textarea:focus {
+		border: 1.5px solid #1976d2;
+		outline: none;
+	}
+	.comments-section button[type='submit'] {
+		border-radius: 1.2em;
+		padding: 0.48em 1.4em;
+		background: #1976d2;
+		color: #fff;
+		font-weight: 600;
+		border: none;
+		cursor: pointer;
+		box-shadow: 0 1px 4px #1976d233;
+		transition: background 0.13s;
+	}
+	.comments-section button[type='submit']:hover:not(:disabled) {
+		background: #145bb5;
+	}
+	.comments-section button[disabled] {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 </style>
