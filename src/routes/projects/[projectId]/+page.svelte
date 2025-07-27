@@ -67,7 +67,7 @@
 	let pendingCenterMainScroll: number | null = null;
 
 	// -----------------------------------------------------------------------------------------------------.
-	// For comments feature.
+	// for comments feature.
 	// -----------------------------------------------------------------------------------------------------.
 	let comments: Comment[] = [];
 	let loadingComments = false;
@@ -75,6 +75,74 @@
 	//let newCommentContent = '';
 	let newCommentText = '';
 	let addingComment = false;
+
+	// -----------------------------------------------------------------------------------------------------.
+	// modal for add/edit task feature.
+	// -----------------------------------------------------------------------------------------------------.
+
+	// ===== Task Modal State =====
+	type TaskModalMode = 'add' | 'edit';
+
+	let taskModalOpen: boolean = false;
+	let taskModalMode: TaskModalMode = 'add'; // 'add' or 'edit'
+	let taskModalTaskId: string | null = null; // For 'edit' mode
+
+	// Centralized form state for modal
+	let taskForm = {
+		title: '',
+		description: '',
+		status: 'open' as Status,
+		due_date: null as string | null,
+		assigned_to: '',
+		selectedItemIds: [] as string[]
+	};
+
+	let savingTaskModal = false;
+	let addAnotherTask = false; // If true, after save the modal resets to blank
+
+	// Helper: reset form for Add Task
+	function resetTaskForm() {
+		taskForm = {
+			title: '',
+			description: '',
+			status: 'open',
+			due_date: null,
+			assigned_to: '',
+			selectedItemIds: []
+		};
+		taskModalTaskId = null;
+	}
+
+	// Open the modal for adding or editing
+	function openTaskModal(mode: TaskModalMode, taskId?: string) {
+		taskModalMode = mode;
+		taskModalOpen = true;
+		addAnotherTask = false;
+
+		if (mode === 'add') {
+			resetTaskForm();
+		} else if (mode === 'edit' && taskId) {
+			const task = tasks.find((t) => t.id === taskId);
+			if (!task) return;
+			taskModalTaskId = task.id;
+			taskForm = {
+				title: task.title ?? '',
+				description: task.description ?? '',
+				status: task.status ?? 'open',
+				due_date: task.due_date ?? null,
+				assigned_to: task.assigned_to ?? '',
+				selectedItemIds: taskItems
+					.filter((link) => link.task_id === task.id)
+					.map((link) => link.item_id)
+			};
+		}
+	}
+
+	function closeTaskModal() {
+		taskModalOpen = false;
+		savingTaskModal = false;
+		resetTaskForm();
+	}
 
 	// -----------------------------------------------------------------------------------------------------.
 	// For edited by feature.
@@ -636,7 +704,7 @@
 		if (!dateStr) return '';
 		const date = new Date(dateStr);
 		const pad = (n: number) => n.toString().padStart(2, '0');
-		return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+		return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}, ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 	}
 
 	function isOverdue(due_date: string | null, status: Status): boolean {
@@ -2531,114 +2599,118 @@
 			{#if selected}
 				<div class="right-pane-inner">
 					<!-- Section Header -->
-					<div class="section-header">
-						<span class="section-icon">📝</span>
-						<span class="section-title">
-							{selected.type === 'task' ? 'Task Details' : 'Subtask Details'}
-						</span>
-					</div>
-
-					<!-- Created by Block -->
-					{#if selected.type === 'task' && selectedTask}
-						<div class="created-by-line">
-							<b>Created by:</b>
-							{#if selectedTask.created_by_email}
-								<span title={selectedTask.created_by_email}>
-									{selectedTask.created_by_email === sessionValue?.user?.email
-										? 'You'
-										: getInitials(selectedTask.created_by_email)}
-								</span>
-							{:else}
-								—
-							{/if}
+					<div class="details-section">
+						<div class="section-header">
+							<span class="section-icon">📝</span>
+							<span class="section-title">
+								{selected.type === 'task' ? 'Task Details' : 'Subtask Details'}
+							</span>
 						</div>
-					{:else if selected.type === 'subtask' && selectedSubtask}
-						<div class="created-by-line">
-							Created by:
-							{#if selectedSubtask.created_by_email}
-								<span title={selectedSubtask.created_by_email}>
-									{selectedSubtask.created_by_email === sessionValue?.user?.email
-										? 'You'
-										: getInitials(selectedSubtask.created_by_email)}
-								</span>
-							{:else}
-								—
-							{/if}
-						</div>
-					{/if}
 
-					<!-- Task Description -->
-					{#if selected.type === 'task' && selectedTask}
-						<div class="task-description-block">
-							<b>Description:</b>
-							{#if selectedTask.description?.trim()}
-								<span style="margin-left: 0.5em;">{selectedTask.description}</span>
-							{:else}
-								<span style="color:#888; margin-left:0.5em;">(No description provided)</span>
-							{/if}
-						</div>
-					{/if}
-
-					<!-- Task Items Block -->
-					{#if selected.type === 'task' && selectedTask}
-						<div class="task-items-block">
-							<b>Items required for this task:</b>
-							{#if items.length === 0}
-								<span style="color:#888;">No items defined for this project.</span>
-							{:else if showAllItems}
-								<ItemChecklist
-									{items}
-									selectedIds={selectedTaskItemIds}
-									disabled={savingItems}
-									showStatus={true}
-									onChange={handleRightPaneItemsChange}
-								/>
-								{#if selectedTaskItemIds.length === 0}
-									<span style="color:#888; margin-left:0.8em;">
-										No items are currently required for this task. Click button below to add
-										requirements.
-									</span>
-								{/if}
-								<button class="expand-items-btn" on:click={toggleShowAllItems}>Hide details</button>
-								{#if savingItems}
-									<span style="color:#888; margin-left:0.8em;">Saving…</span>
-								{/if}
-							{:else}
-								{#if selectedTaskItemIds.length === 0}
-									<span style="color:#888; margin-left:0.8em;">
-										No items are currently required for this task. Click button below to add
-										requirements.
-									</span>
-								{:else if missingItemsSummary.length > 0}
-									<ul class="task-items-summary-list">
-										{#each missingItemsSummary as item}
-											<li>
-												<span
-													class="status-dot"
-													style="background:#e74c3c; border-color:#aaa; width:0.9em; height:0.9em; border-radius:50%; display:inline-block; margin-right:0.4em;"
-												>
-												</span>
-												{item.name}
-											</li>
-										{/each}
-									</ul>
-									<span style="color:#e74c3c; margin-left:0.4em;">
-										{missingItemsSummary.length} required item{missingItemsSummary.length > 1
-											? 's are'
-											: ' is'} missing.
+						<!-- Created by Block -->
+						{#if selected.type === 'task' && selectedTask}
+							<div class="created-by-line">
+								<b>Created by:</b>
+								{#if selectedTask.created_by_email}
+									<span title={selectedTask.created_by_email}>
+										{selectedTask.created_by_email === sessionValue?.user?.email
+											? 'You'
+											: getInitials(selectedTask.created_by_email)}
 									</span>
 								{:else}
-									<span style="color:#47e37a;">✔ All required items are present.</span>
+									—
 								{/if}
-								<button class="expand-items-btn" on:click={toggleShowAllItems}
-									>Show all items</button
-								>
-							{/if}
-						</div>
-					{/if}
+							</div>
+						{:else if selected.type === 'subtask' && selectedSubtask}
+							<div class="created-by-line">
+								Created by:
+								{#if selectedSubtask.created_by_email}
+									<span title={selectedSubtask.created_by_email}>
+										{selectedSubtask.created_by_email === sessionValue?.user?.email
+											? 'You'
+											: getInitials(selectedSubtask.created_by_email)}
+									</span>
+								{:else}
+									—
+								{/if}
+							</div>
+						{/if}
+
+						<!-- Task Description -->
+						{#if selected.type === 'task' && selectedTask}
+							<div class="task-description-block">
+								<b>Description:</b>
+								{#if selectedTask.description?.trim()}
+									<span style="margin-left: 0.5em;">{selectedTask.description}</span>
+								{:else}
+									<span style="color:#888; margin-left:0.5em;">(No description provided)</span>
+								{/if}
+							</div>
+						{/if}
+
+						<!-- Task Items Block -->
+						{#if selected.type === 'task' && selectedTask}
+							<div class="task-items-block">
+								<b>Items required for this task:</b>
+								{#if items.length === 0}
+									<span style="color:#888;">No items defined for this project.</span>
+								{:else if showAllItems}
+									<ItemChecklist
+										{items}
+										selectedIds={selectedTaskItemIds}
+										disabled={savingItems}
+										showStatus={true}
+										onChange={handleRightPaneItemsChange}
+									/>
+									{#if selectedTaskItemIds.length === 0}
+										<span style="color:#888; margin-left:0.8em;">
+											No items are currently required for this task. Click button below to add
+											requirements.
+										</span>
+									{/if}
+									<button class="expand-items-btn" on:click={toggleShowAllItems}
+										>Hide details</button
+									>
+									{#if savingItems}
+										<span style="color:#888; margin-left:0.8em;">Saving…</span>
+									{/if}
+								{:else}
+									{#if selectedTaskItemIds.length === 0}
+										<span style="color:#888; margin-left:0.8em;">
+											No items are currently required for this task. Click button below to add
+											requirements.
+										</span>
+									{:else if missingItemsSummary.length > 0}
+										<ul class="task-items-summary-list">
+											{#each missingItemsSummary as item}
+												<li>
+													<span
+														class="status-dot"
+														style="background:#e74c3c; border-color:#aaa; width:0.9em; height:0.9em; border-radius:50%; display:inline-block; margin-right:0.4em;"
+													>
+													</span>
+													{item.name}
+												</li>
+											{/each}
+										</ul>
+										<span style="color:#e74c3c; margin-left:0.4em;">
+											{missingItemsSummary.length} required item{missingItemsSummary.length > 1
+												? 's are'
+												: ' is'} missing.
+										</span>
+									{:else}
+										<span style="color:#47e37a;">✔ All required items are present.</span>
+									{/if}
+									<button class="expand-items-btn" on:click={toggleShowAllItems}
+										>Show all items</button
+									>
+								{/if}
+							</div>
+						{/if}
+					</div>
 
 					<!-- Section Divider -->
-					<div class="section-divider"></div>
+					<!-- <div class="section-divider"></div> -->
 
 					<!-- Comments Section -->
 					<section class="comments-section">
@@ -2655,7 +2727,7 @@
 											{getInitials(userMap[comment.user_id] ?? 'U')}
 										</span>
 										<span class="comment-meta">
-											<span class="comment-author">{userMap[comment.user_id] ?? 'Unknown'}</span>
+											<!-- <span class="comment-author">{userMap[comment.user_id] ?? 'Unknown'}</span> -->
 											<span class="comment-time">{formatDateTime(comment.created_at)}</span>
 										</span>
 										<div class="comment-text">{comment.content}</div>
@@ -2885,6 +2957,7 @@
 				<button on:click={closePanels} class="close-panel-btn">Close</button>
 			</div>
 		{/if}
+
 		<!---------------------- Items panel items ------------------------->
 		{#if showItemsPanel}
 			<div
@@ -2965,15 +3038,135 @@
 				<button on:click={() => (showItemsPanel = false)} class="close-panel-btn">Close</button>
 			</div>
 		{/if}
+
+		<!---------------------- Task modal task ------------------------->
+		{#if taskModalOpen}
+			<!-- ===== Task Modal Overlay ===== -->
+			<div
+				class="panel-overlay"
+				role="button"
+				tabIndex="0"
+				aria-label="Close add/edit task dialog"
+				on:click={closeTaskModal}
+				on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && closeTaskModal()}
+			></div>
+			<div
+				class="panel-drawer task-modal-drawer"
+				role="dialog"
+				aria-modal="true"
+				aria-label={taskModalMode === 'add' ? 'Add Task' : 'Edit Task'}
+				tabIndex="0"
+				on:click|stopPropagation
+			>
+				<h3 style="margin-bottom:0.7em;">
+					{taskModalMode === 'add' ? 'Add New Task' : 'Edit Task'}
+				</h3>
+				<form
+					on:submit|preventDefault={saveTaskModal}
+					style="display: flex; flex-direction: column; gap: 1.2em; min-width: 360px;"
+				>
+					<!-- Title -->
+					<label>
+						<b>Title</b>
+						<input
+							type="text"
+							bind:value={taskForm.title}
+							required
+							style="width:100%;margin-top:0.4em;"
+						/>
+					</label>
+					<!-- Description -->
+					<label>
+						<b>Description</b>
+						<textarea
+							bind:value={taskForm.description}
+							rows="2"
+							style="width:100%;margin-top:0.3em;"
+							placeholder="(Optional)"
+						></textarea>
+					</label>
+					<!-- Status -->
+					<label>
+						<b>Status</b>
+						<select bind:value={taskForm.status}>
+							<option value="open">Open</option>
+							<option value="in_progress">In Progress</option>
+							<option value="done">Done</option>
+						</select>
+					</label>
+					<!-- Due Date -->
+					<label>
+						<b>Due Date</b>
+						<input type="date" bind:value={taskForm.due_date} style="margin-left:0.8em;" />
+						{#if taskForm.due_date}
+							<button
+								type="button"
+								on:click={() => (taskForm.due_date = null)}
+								style="margin-left:0.7em;">❌</button
+							>
+						{/if}
+					</label>
+					<!-- Assigned To -->
+					<label>
+						<b>Assign To</b>
+						<select bind:value={taskForm.assigned_to}>
+							<option value="">Unassigned</option>
+							{#each members as m}
+								{#if m.user_id}
+									<option value={m.user_id}>{m.email}</option>
+								{/if}
+							{/each}
+						</select>
+					</label>
+					<!-- Items Checklist -->
+					<label>
+						<b>Required Items</b>
+						<ItemChecklist
+							{items}
+							selectedIds={taskForm.selectedItemIds}
+							onChange={(ids) => (taskForm.selectedItemIds = ids)}
+							disabled={savingTaskModal}
+							showStatus={true}
+						/>
+					</label>
+
+					<!-- Save/Add Another Row -->
+					<div style="display:flex; gap:1em; align-items:center; margin-top:0.7em;">
+						<button
+							type="submit"
+							class="toolbar-btn"
+							disabled={savingTaskModal || !taskForm.title.trim()}
+						>
+							{savingTaskModal ? 'Saving…' : taskModalMode === 'add' ? 'Save Task' : 'Save Changes'}
+						</button>
+						{#if taskModalMode === 'add'}
+							<button
+								type="button"
+								class="toolbar-btn"
+								on:click={() => (addAnotherTask = !addAnotherTask)}
+								style="background: {addAnotherTask ? '#1976d2' : '#e3edfc'}; color:{addAnotherTask
+									? '#fff'
+									: '#1976d2'}"
+							>
+								{addAnotherTask ? '✓ Add Another Task' : '+ Add Another Task'}
+							</button>
+						{/if}
+						<button type="button" class="close-panel-btn" on:click={closeTaskModal}>
+							Cancel
+						</button>
+					</div>
+				</form>
+			</div>
+		{/if}
 	{/if}
 </div>
 
 <style>
 	:root {
-		--app-scale: 0.80;
+		--app-scale: 0.7;
 	}
 	.project-page-layout {
-		font-size: calc(1.1rem * var(--app-scale));
+		font-size: calc(1.06rem * var(--app-scale));
 	}
 
 	/* Main pain, containing all other panes */
@@ -2992,6 +3185,7 @@
 		margin: 0 auto;
 		max-width: align-self;
 		gap: 0.5em; /* This prevents panes from visually colliding/overlapping */
+		overflow: hidden;
 	}
 
 	/* Left Pane */
@@ -3041,7 +3235,7 @@
 
 	/* Center Top (Toolbar) */
 	.center-top {
-		min-height: 1.5em;
+		min-height: 0em;
 		margin-bottom: 0.7;
 		position: sticky;
 		top: 0;
@@ -3053,7 +3247,7 @@
 		backdrop-filter: blur(4px); */
 		border-radius: 0.7em;
 		box-shadow: 0 15px 18px #1976d224;
-		padding: 1.1em 1.3em;
+		padding: 0em 0.3em;
 		gap: 0.7em;
 	}
 
@@ -3089,6 +3283,7 @@
 		min-width: 340px; /* increased for comfort */
 		max-width: 650px; /* so it never gets TOO wide */
 		height: calc(100% - 2em);
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		justify-content: flex-start;
@@ -3106,7 +3301,6 @@
 		align-items: stretch;
 		overflow: visible;
 		position: relative;
-		min-height: 0;
 		z-index: 2;
 	}
 
@@ -3537,9 +3731,10 @@
 		display: flex;
 		flex-direction: column;
 		/* gap: 2.1em; */
-		gap: 0em;        /* Reduced vertical gap between blocks */
+		gap: 0em; /* Reduced vertical gap between blocks */
 		padding-bottom: 56.9em; /* optional, for less bottom white-space */
-		min-height: 100%;
+		height: 100%;
+		min-height: 0%;
 	}
 
 	/* Section Header */
@@ -3570,7 +3765,7 @@
 	}
 
 	/* Section Divider */
-	.section-divider {
+	/* .section-divider {
 		height: 0em;
 		width: 94%;
 		border: none;
@@ -3579,7 +3774,7 @@
 		border-radius: 0.6em;
 		opacity: 0.72;
 		align-self: center;
-	}
+	} */
 
 	/* Created By & Description Block */
 	.created-by-line {
@@ -3662,9 +3857,15 @@
 	.comments-section {
 		background: #f7fbff;
 		border-radius: 1em;
-		padding: 1em 1em 1.1em 1em;
+		padding: 0.5em 0.1em 0.1em 0.5em;
 		box-shadow: 0 1px 7px #1976d214;
 		margin-top: 1.5em;
+		flex: 1 1 auto;
+		overflow-y: auto;
+		min-height: 0;
+		max-height: 56vh; /* or: height: 100%; test for best fit */
+		margin-bottom: 0.2em;
+		padding-bottom: 21.7em;
 	}
 	.comments-section h4 {
 		margin: 0 0 0.7em 0;
@@ -3706,10 +3907,10 @@
 		gap: 0.18em;
 		min-width: 0;
 	}
-	.comment-author {
+	/* .comment-author {
 		font-weight: 600;
 		color: #1e355d;
-	}
+	} */
 	.comment-time {
 		font-size: 0.91em;
 		color: #888;
@@ -3752,5 +3953,8 @@
 	.comments-section button[disabled] {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+	.details-section {
+		flex: 0 0 auto; /* do not grow/shrink, stays top */
 	}
 </style>
