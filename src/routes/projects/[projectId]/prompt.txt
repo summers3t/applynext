@@ -1,0 +1,86 @@
+Prompt for New Chat — Full Context for +page.svelte in ApplyNext Project
+Project: ApplyNext – SvelteKit + Supabase Kanban App
+File: +page.svelte (FULL CODE PROVIDED)
+I am working on a full-stack Kanban-style task management app called ApplyNext, using SvelteKit, Supabase (Postgres, Auth, RLS), and TailwindCSS (plus some hand-written CSS). The main project file is +page.svelte, which implements the entire UI and all CRUD logic for:
+
+Projects (with member management and roles)
+
+Tasks and Subtasks (Kanban-style, with inline creation/editing, assignment, sorting, and status)
+
+Project Items (checklists, assignable per task, with presence status and item-to-task linking)
+
+Right pane details (task/subtask detail, created by, description, assigned user, item requirements, comments)
+
+Members/Invitations/Role management (admin/editor/viewer, invitation flows, removing/updating)
+
+Comment system per task/subtask (including display and add logic)
+
+Panel overlays for members, items, and project edit
+
+Modern glass UI with custom CSS for all panes, tables, forms, popovers, and interactions
+
+File Structure (from previous chat, paste this for continuity)
+SCRIPT SECTION:
+
+State for UI, loading, and form variables (project, members, tasks, items, selection, etc)
+
+All async CRUD logic (Supabase calls for loading, updating, deleting, inviting, item-linking, etc.)
+
+Helpers for date formatting, scroll, user mapping, item/task reindexing, permissions, status color
+
+Role-based access, admin/creator permissions, and safety checks
+
+Functions for all major flows (project edit, invite/remove/change role, task and subtask CRUD, comment CRUD, status popovers, item logic)
+
+MAIN MARKUP:
+
+Left Pane: Project info, description, deadline, role badge, members, items, and delete
+
+Center Pane: Toolbar (Insert, Add Subtask, Move, Edit, Delete); task/subtask table (sortable, expandable, with in-table creation/editing forms); inline popovers for status; summary badges; item checklist
+
+Right Pane: Details for selected task/subtask (created by, description, assigned to, items required for task, items checklist block, comments section with add comment form)
+
+Members Panel: Role management, invitation, remove user, errors/success, role dropdowns for admin, invite block
+
+Edit Project Panel: Edit form for name/desc/deadline, error/success, close button
+
+Items Panel: CRUD for items, present/not-present status, remove item
+
+All overlays with appropriate ARIA/keyboard handling
+
+STYLES:
+
+Full custom CSS for panes, table, overlays, buttons, popovers, badges, modern glass look, highlight logic, etc.
+
+Responsive and accessibility-related tweaks
+
+Logic/Behavior Notes:
+All tasks/subtasks and item assignment logic handled in this file
+
+No external state management – all data is loaded/updated via Supabase in-file
+
+Role/permission checks strictly enforced for all actions
+
+Comments and items are live-fetched for each selection
+
+Tasks and subtasks have sort indexes, move up/down logic, and popover status switch
+
+Task creation, insertion, editing, and subtask logic is fully inline and modal-free
+
+Task items are linked via a join table (task_items) and shown in right pane
+
+API/DB/Component Dependencies:
+supabase: used for all data operations (from('projects'), from('tasks'), from('subtasks'), from('task_items'), from('user_emails'), etc)
+
+ItemChecklist Svelte component for item assignment/checkbox logic in both main pane and right pane
+
+Uses a session store for current user/session
+
+Uses helper functions (e.g., getInitials, formatDate, statusDotColor)
+
+Current State:
+The code provided covers ALL business logic, state, markup, and styles for the project page, and was last confirmed working. The assistant should assume the entire file is present and up-to-date.
+
+Please do not guess variable names or logic; always check this structure.
+
+Continue from here: All follow-up requests should be based on the fact that you have full visibility into the entire current file, as pasted.

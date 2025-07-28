@@ -8,8 +8,6 @@
 	import { goto } from '$app/navigation';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 	import ItemChecklist from '$lib/components/ItemChecklist.svelte';
-	//export let onSave: (task: any) => Promise<void>;
-	//export let closeModal: () => void;
 
 	// ========== Project Info & Members ==========
 	type Member = {
@@ -69,14 +67,7 @@
 	let pendingCenterMainScroll: number | null = null;
 
 	// -----------------------------------------------------------------------------------------------------.
-	// “New” Badge for Newly Created Task/Subtask
-	let recentlyAddedTaskId: string | null = null;
-	let newBadgeTimeout: any = null;
-	let recentlyAddedSubtaskId: string | null = null;
-	let newSubtaskBadgeTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	// -----------------------------------------------------------------------------------------------------.
-	// For comments feature.
+	// for comments feature.
 	// -----------------------------------------------------------------------------------------------------.
 	let comments: Comment[] = [];
 	let loadingComments = false;
@@ -86,248 +77,71 @@
 	let addingComment = false;
 
 	// -----------------------------------------------------------------------------------------------------.
-	// For add task add new task modal.
+	// modal for add/edit task feature.
 	// -----------------------------------------------------------------------------------------------------.
 
-	let showAddTaskModal = false; // Controls if modal is visible
-	let modalTaskTitle = '';
-	let modalTaskDescription = '';
-	let modalTaskStatus: Status = 'open';
-	let modalTaskDueDate: string | null = null;
-	let modalTaskAssignedTo: string = '';
-	let showModal = false;
-	let inputEl: HTMLInputElement | null = null;
-	let isSaving = false;
-	let modalTaskSelectedItemIds: string[] = [];
-	let modalnewBadgeTimeout: ReturnType<typeof setTimeout> | null = null;
-	let modalpendingScrollTarget: { type: string; id: string } | null = null;
+	// ===== Task Modal State =====
+	type TaskModalMode = 'add' | 'edit';
 
-	type NewTask = {
-		title: string;
-		description: string;
-		status: string;
-		due_date: string | null;
-		assigned_to: string | null;
+	let taskModalOpen: boolean = false;
+	let taskModalMode: TaskModalMode = 'add'; // 'add' or 'edit'
+	let taskModalTaskId: string | null = null; // For 'edit' mode
+
+	// Centralized form state for modal
+	let taskForm = {
+		title: '',
+		description: '',
+		status: 'open' as Status,
+		due_date: null as string | null,
+		assigned_to: '',
+		selectedItemIds: [] as string[]
 	};
 
-	$: if (showAddTaskModal) {
-		tick().then(() => inputEl?.focus());
-	}
+	let savingTaskModal = false;
+	let addAnotherTask = false; // If true, after save the modal resets to blank
 
-	function closeAddTaskModal() {
-		showAddTaskModal = false;
-		addAtIndex = null;
-		resetModalFields();
-	}
-
-	async function handleAddTask(task: NewTask) {
-		// Validate fields if needed
-		// await supabase call to insert task
-		// Refresh the tasks list
-		// Optionally: show toast/notification
-		closeAddTaskModal();
-	}
-
-	function closeModal() {
-		closeAddTaskModal();
-	}
-
-	function resetModalFields() {
-		modalTaskTitle = '';
-		modalTaskDescription = '';
-		modalTaskStatus = 'open'; // or your default
-		modalTaskDueDate = null;
-		newTaskAssignedTo = '';
-		modalTaskSelectedItemIds = []; // if you use items
-	}
-
-	// function closeModal() {
-	// 	showAddTaskModal = false;
-	// 	// Reset modal fields if needed
-	// }
-
-	function onClickAddTask() {
-		// Determine insertion point
-		if (selected && selected.type === 'task') {
-			addAtIndex = tasks.findIndex((t) => t.id === selected?.id);
-		} else {
-			addAtIndex = tasks.length - 1; // End of list
-		}
-		showAddTaskModal = true;
-		// Optionally reset fields if desired, or keep last-used for batch UX
-	}
-
-	async function insertTaskWithModalFields(atIndex: number | null = null) {
-		// 1️⃣ Prevent blank title
-		if (!modalTaskTitle.trim()) return null;
-
-		// 2️⃣ Prevent duplicate title (case-insensitive)
-		const duplicate = tasks.some(
-			(t) => t.title.trim().toLowerCase() === modalTaskTitle.trim().toLowerCase()
-		);
-		if (duplicate) {
-			alert('A task with this title already exists.');
-			return null;
-		}
-
-		// 3️⃣ Figure out sort_index for DB/UI order
-		let sort_index = tasks.length;
-		if (atIndex !== null && atIndex >= -1) sort_index = atIndex + 1;
-
-		// 4️⃣ Compose task object
-		const taskData = {
-			project_id: projectId,
-			title: modalTaskTitle.trim(),
-			description: modalTaskDescription.trim(),
-			status: modalTaskStatus,
-			due_date: modalTaskDueDate,
-			sort_index,
-			owner_id: sessionValue?.user?.id,
-			created_by_email: sessionValue?.user?.email,
-			last_edited_by: sessionValue?.user?.id,
-			assigned_to:
-				modalTaskAssignedTo && modalTaskAssignedTo.trim() !== '' ? modalTaskAssignedTo : null
+	// Helper: reset form for Add Task
+	function resetTaskForm() {
+		taskForm = {
+			title: '',
+			description: '',
+			status: 'open',
+			due_date: null,
+			assigned_to: '',
+			selectedItemIds: []
 		};
-
-		// 5️⃣ Insert in Supabase and memory
-		let inserted;
-		let wasEmpty = tasks.length === 0;
-
-		const { data, error } = await supabase
-			.from('tasks')
-			.insert([taskData])
-			.select('*, subtasks(*)');
-
-		if (error || !data || !data[0]) {
-			alert('Error creating task: ' + (error?.message ?? 'unknown'));
-			return null;
-		}
-		inserted = data[0];
-
-		// Insert in UI array at correct spot
-		if (sort_index >= 0 && sort_index < tasks.length) {
-			const before = tasks.slice(0, sort_index);
-			const after = tasks.slice(sort_index);
-			tasks = [...before, inserted, ...after];
-			await reindexTasks(tasks);
-		} else {
-			tasks = [...tasks, inserted];
-		}
-
-		// Optionally update user map for initials badge (if empty)
-		if (wasEmpty && inserted.assigned_to) {
-			try {
-				const { data: users } = await supabase
-					.from('user_emails')
-					.select('id, email')
-					.in('id', [inserted.assigned_to, inserted.last_edited_by].filter(Boolean));
-				if (users) users.forEach((u) => (userMap[u.id] = u.email));
-				userMap = { ...userMap };
-			} catch {}
-		}
-
-		// 6️⃣ Link items
-		if (modalTaskSelectedItemIds && modalTaskSelectedItemIds.length > 0) {
-			const links = modalTaskSelectedItemIds.map((item_id) => ({
-				task_id: inserted.id,
-				item_id,
-				project_id: projectId,
-				created_by: sessionValue?.user?.id
-			}));
-			const { error: linkError } = await supabase.from('task_items').insert(links);
-			if (linkError) {
-				console.error('Failed to link items to task:', linkError.message);
-			}
-		}
-		await fetchTaskItems();
-
-		// 7️⃣ Show “New” badge
-		recentlyAddedTaskId = inserted.id;
-		if (newBadgeTimeout) clearTimeout(newBadgeTimeout);
-		newBadgeTimeout = setTimeout(() => {
-			recentlyAddedTaskId = null;
-		}, 60000);
-
-		// 8️⃣ Scroll to new
-		pendingScrollTarget = { type: 'task', id: inserted.id };
-
-		return inserted;
+		taskModalTaskId = null;
 	}
 
-	async function handleModalSave() {
-		isSaving = true;
-		// Always insert after selected, else end
-		let atIndex = null;
-		if (selected && selected.type === 'task') {
-			atIndex = tasks.findIndex((t) => t.id === selected?.id);
-		} else if (tasks.length > 0) {
-			atIndex = tasks.length - 1;
-		}
-		const task = await insertTaskWithModalFields(atIndex);
-		isSaving = false;
-		if (task) {
-			resetModalFields();
-			closeModal();
+	// Open the modal for adding or editing
+	function openTaskModal(mode: TaskModalMode, taskId?: string) {
+		taskModalMode = mode;
+		taskModalOpen = true;
+		addAnotherTask = false;
+
+		if (mode === 'add') {
+			resetTaskForm();
+		} else if (mode === 'edit' && taskId) {
+			const task = tasks.find((t) => t.id === taskId);
+			if (!task) return;
+			taskModalTaskId = task.id;
+			taskForm = {
+				title: task.title ?? '',
+				description: task.description ?? '',
+				status: task.status ?? 'open',
+				due_date: task.due_date ?? null,
+				assigned_to: task.assigned_to ?? '',
+				selectedItemIds: taskItems
+					.filter((link) => link.task_id === task.id)
+					.map((link) => link.item_id)
+			};
 		}
 	}
 
-	let addAtIndex: number | null = null; // tracks where to insert next
-
-	async function handleSaveAndAddAnother() {
-		isSaving = true;
-
-		// 1️⃣ Validate required fields
-		const titleTrimmed = modalTaskTitle.trim();
-		if (!titleTrimmed) {
-			isSaving = false;
-			return;
-		}
-
-		// 2️⃣ Prevent duplicate
-		const duplicate = tasks.some(
-			(t) => t.title.trim().toLowerCase() === titleTrimmed.toLowerCase()
-		);
-		if (duplicate) {
-			alert('A task with this title already exists.');
-			isSaving = false;
-			return;
-		}
-
-		// 3️⃣ Insert after previous (addAtIndex), or after selected, or at end
-		let atIndex = addAtIndex;
-		if (atIndex === null) {
-			if (selected && selected.type === 'task') {
-				atIndex = tasks.findIndex((t) => t.id === selected?.id);
-			} else if (tasks.length > 0) {
-				atIndex = tasks.length - 1;
-			}
-		}
-
-		const inserted = await insertTaskWithModalFields(atIndex);
-		if (!inserted) {
-			isSaving = false;
-			return;
-		}
-
-		// 4️⃣ Set addAtIndex to the new task’s index (so next new task goes below)
-		addAtIndex = tasks.findIndex((t) => t.id === inserted.id);
-
-		// 5️⃣ Reset for rapid entry, but keep status, assigned, items
-		const prevStatus = modalTaskStatus;
-		const prevAssignedTo = modalTaskAssignedTo;
-		const prevItems = modalTaskSelectedItemIds.slice();
-
-		modalTaskTitle = '';
-		modalTaskDescription = '';
-		modalTaskStatus = prevStatus;
-		modalTaskAssignedTo = prevAssignedTo;
-		modalTaskDueDate = null;
-		modalTaskSelectedItemIds = prevItems;
-
-		isSaving = false;
-
-		await tick();
-		inputEl?.focus();
+	function closeTaskModal() {
+		taskModalOpen = false;
+		savingTaskModal = false;
+		resetTaskForm();
 	}
 
 	// -----------------------------------------------------------------------------------------------------.
@@ -576,9 +390,9 @@
 			} else if (type === 'subtask') {
 				el = document.getElementById('subtask-' + id);
 			}
-			if (el) {
-				el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-			}
+			// if (el) {
+			// 	el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			// }
 			pendingScrollTarget = null;
 		})();
 	}
@@ -600,6 +414,12 @@
 	}
 
 	// -------------------------------------------------------------------------------------------.
+
+	// “New” Badge for Newly Created Task/Subtask
+	let recentlyAddedTaskId: string | null = null;
+	let newBadgeTimeout: any = null;
+	let recentlyAddedSubtaskId: string | null = null;
+	let newSubtaskBadgeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// -------------------------------------------------------------------------------------------.
 
@@ -2044,9 +1864,6 @@
 		<div class="center-pane">
 			<div class="center-top">
 				<div class="action-toolbar">
-					<!-- Add Task Button, always visible -->
-					<button class="toolbar-btn" on:click={() => (showAddTaskModal = true)}> Add Task </button>
-
 					<button
 						class="toolbar-btn"
 						on:click={handleInsertClick}
@@ -3205,7 +3022,7 @@
 								></button>
 
 								<span style="flex:1"></span>
-								<!-------- remove item button -------->
+								<!-------- Remove Item button -------->
 								<button
 									type="button"
 									style="background:#eee;color:#c00;border:none;border-radius:0.5em;padding:0.25em 1.1em;"
@@ -3222,165 +3039,88 @@
 			</div>
 		{/if}
 
-		<!---------------------- add task button ----------------------->
-		{#if showAddTaskModal}
+		<!---------------------- Task modal task ------------------------->
+		{#if taskModalOpen}
 			<div
-				class="modal-backdrop"
+				class="panel-overlay"
+				role="button"
 				tabindex="0"
-				aria-modal="true"
+				aria-label="Close add/edit task modal"
+				on:click={() => (taskModalOpen = false)}
+				on:keydown={(e) => (e.key === 'Escape' || e.key === 'Enter') && (taskModalOpen = false)}
+			></div>
+			<!-- svelte-ignore a11y_interactive_supports_focus -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="panel-drawer task-modal"
 				role="dialog"
-				aria-label="Add Task"
-				on:keydown={(e) => e.key === 'Escape' && (showAddTaskModal = false)}
-				on:click={() => (showAddTaskModal = false)}
+				aria-modal="true"
+				aria-label="Add or edit task"
+				tabindex="0"
+				on:click|stopPropagation
 			>
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-				<div class="modal" tabindex="0" on:click|stopPropagation role="document">
-					<div class="modal-header">
-						<h3>Add Task</h3>
-						<button
-							type="button"
-							aria-label="Close"
-							class="close-modal-btn"
-							on:click={() => (showAddTaskModal = false)}>×</button
-						>
+				<h3 style="margin-bottom:0.5em;">
+					{editingTaskId ? 'Edit Task' : 'Add New Task'}
+				</h3>
+				<form
+					on:submit|preventDefault={editingTaskId ? saveEditTask : createTaskInModal}
+					style="display:flex; flex-direction:column; gap:0.7em;"
+				>
+					<input
+						type="text"
+						placeholder="Task title"
+						bind:value={editTitle}
+						required
+						style="margin-bottom:0.2em;"
+						tabindex="0"
+					/>
+					<input
+						type="text"
+						placeholder="Description (optional)"
+						bind:value={editDescription}
+						style="margin-bottom:0.2em;"
+						tabindex="0"
+					/>
+					<select bind:value={editStatus} style="margin-bottom:0.2em;" tabindex="0">
+						<option value="open">Open</option>
+						<option value="in_progress">In Progress</option>
+						<option value="done">Done</option>
+					</select>
+					<input
+						type="date"
+						bind:value={editDueDate}
+						style="margin-bottom:0.2em; width:70%;"
+						tabindex="0"
+					/>
+					<select bind:value={editAssignedTo} style="margin-bottom:0.2em;" tabindex="0">
+						<option value="">Unassigned</option>
+						{#each members as m}
+							{#if m.user_id}
+								<option value={m.user_id}>{m.email}</option>
+							{/if}
+						{/each}
+					</select>
+					<!-- Full items checklist -->
+					<ItemChecklist
+						{items}
+						selectedIds={editTaskSelectedItemIds}
+						onChange={(ids) => (editTaskSelectedItemIds = ids)}
+						style="margin-bottom:0.2em;"
+					/>
+					<div style="display:flex; gap:0.7em; margin-top:0.8em;">
+						<button type="submit" disabled={savingEdit || !editTitle.trim()}>
+							{editingTaskId ? 'Save' : 'Add Task'}
+						</button>
+						<button type="button" on:click={() => (taskModalOpen = false)} tabindex="0">
+							Cancel
+						</button>
+						{#if !editingTaskId}
+							<button type="button" on:click={addAnotherTaskFromModal} tabindex="0">
+								Add Another Task
+							</button>
+						{/if}
 					</div>
-					<div class="modal-body">
-						<!-- ----------------------Form will be added here next-------------------------- -->
-						<!-- <p>[Form goes here]</p> -->
-						<form autocomplete="off" on:submit|preventDefault={handleModalSave}>
-							<div class="form-group">
-								<label for="task-title"><b>Title</b> <span style="color:#e74c3c">*</span></label>
-								<input
-									id="task-title"
-									type="text"
-									bind:value={modalTaskTitle}
-									placeholder="Enter task title"
-									required
-									maxlength="80"
-									style="width:100%;margin-bottom:1em;"
-									bind:this={inputEl}
-								/>
-							</div>
-							<div class="form-group">
-								<label for="task-desc"><b>Description</b></label>
-								<textarea
-									bind:value={modalTaskDescription}
-									maxlength="200"
-									rows="3"
-									placeholder="Description (optional)"
-								></textarea>
-							</div>
-							<div class="form-row" style="display:flex;gap:1em;">
-								<div>
-									<label for="task-status"><b>Status</b></label>
-									<select id="task-status" bind:value={modalTaskStatus} style="margin-left:0.5em;">
-										<option value="open">Open</option>
-										<option value="in_progress">In Progress</option>
-										<option value="done">Done</option>
-									</select>
-								</div>
-								<div>
-									<label for="task-due-date"><b>Due date</b></label>
-									<input id="task-due-date" type="date" bind:value={modalTaskDueDate} />
-								</div>
-								<div>
-									<label for="task-assigned-to"><b>Assign to</b></label>
-									<select
-										id="task-assigned-to"
-										bind:value={newTaskAssignedTo}
-										style="margin-left:0.5em;"
-									>
-										<option value="">Unassigned</option>
-										{#each members as m}
-											{#if m.user_id}
-												<option value={m.user_id}>{m.email}</option>
-											{/if}
-										{/each}
-									</select>
-								</div>
-							</div>
-							<!-- ------------ item group add new task------------ -->
-							<div class="form-group">
-								<span class="form-label"><b>Items required</b></span>
-								<!-- <ItemChecklist
-									{items}
-									selectedIds={modalTaskSelectedItemIds}
-									onChange={(ids) => (modalTaskSelectedItemIds = ids)}
-								/> -->
-								<ul style="list-style:none;padding:0;margin:0;">
-									{#each items as item}
-										<li style="display:flex;align-items:center;gap:0.7em;margin-bottom:0.35em;">
-											<!-- Status dot: green for present, red for missing -->
-											<span
-												style="
-                        width:1em;
-                        height:1em;
-                        border-radius:0.5em;
-                        background: {item.status === 'present' ? '#47e37a' : '#e74c3c'};
-                        border: 1.5px solid #aaa;
-                        display:inline-block;
-                    "
-												title={item.status === 'present' ? 'Present' : 'Missing'}
-											></span>
-
-											<!-- The item selection checkbox -->
-											<input
-												type="checkbox"
-												id={'item-' + item.id}
-												checked={modalTaskSelectedItemIds.includes(item.id)}
-												on:change={() => {
-													// Toggle logic
-													if (modalTaskSelectedItemIds.includes(item.id)) {
-														modalTaskSelectedItemIds = modalTaskSelectedItemIds.filter(
-															(i) => i !== item.id
-														);
-													} else {
-														modalTaskSelectedItemIds = [...modalTaskSelectedItemIds, item.id];
-													}
-												}}
-											/>
-
-											<label for={'item-' + item.id} style="flex:1;">
-												{item.name}
-											</label>
-
-											<span
-												style="font-size:0.94em;color:{item.status === 'present'
-													? '#47e37a'
-													: '#e74c3c'};"
-											>
-												{item.status === 'present' ? 'Present' : 'Missing'}
-											</span>
-										</li>
-									{/each}
-								</ul>
-							</div>
-							<div style="margin-top:1.2em;display:flex;gap:1em;">
-								<button
-									type="submit"
-									class="toolbar-btn"
-									disabled={isSaving || !modalTaskTitle.trim()}>Save</button
-								>
-								<button
-									type="button"
-									class="toolbar-btn"
-									on:click={handleSaveAndAddAnother}
-									disabled={isSaving || !modalTaskTitle.trim()}
-								>
-									Save and Add Another
-								</button>
-								<button type="button" class="toolbar-btn" on:click={closeModal}>Cancel</button>
-							</div>
-						</form>
-					</div>
-					<div class="modal-footer">
-						<button type="button" class="toolbar-btn" on:click={() => (showAddTaskModal = false)}
-							>Cancel</button
-						>
-					</div>
-				</div>
+				</form>
 			</div>
 		{/if}
 	{/if}
@@ -4181,61 +3921,5 @@
 	}
 	.details-section {
 		flex: 0 0 auto; /* do not grow/shrink, stays top */
-	}
-
-	.modal-backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 32, 60, 0.16);
-		z-index: 9001;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		backdrop-filter: blur(5px);
-	}
-	.modal {
-		background: #fff;
-		border-radius: 1.3em;
-		box-shadow:
-			0 8px 44px #1976d277,
-			0 1.5px 8px #ffffff44 inset;
-		padding: 2.4em 2.2em 2em 2.2em;
-		min-width: 410px;
-		max-width: 92vw;
-		min-height: 160px;
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: 1.1em;
-	}
-	.modal-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1em;
-		margin-bottom: 0.7em;
-	}
-	.close-modal-btn {
-		background: none;
-		border: none;
-		font-size: 2em;
-		color: #1976d2;
-		font-weight: bold;
-		cursor: pointer;
-		line-height: 1;
-		border-radius: 1.1em;
-		padding: 0.13em 0.44em;
-		transition: background 0.13s;
-	}
-	.close-modal-btn:hover {
-		background: #e3edfc;
-	}
-	.modal-body {
-		margin-bottom: 1.1em;
-	}
-	.modal-footer {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.7em;
 	}
 </style>
