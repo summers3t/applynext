@@ -1889,6 +1889,37 @@
 		const task = tasks[taskIdx];
 		let inserted;
 		let sort_index = task.subtasks.length;
+
+		// -------------- Duplicate subtasks ------------------
+
+		const { data: latestSubtasks, error: fetchError } = await supabase
+			.from('subtasks')
+			.select('content')
+			.eq('task_id', taskId);
+
+		if (fetchError) {
+			alert('Error fetching subtasks: ' + fetchError.message);
+			creatingSubtask = false;
+			return;
+		}
+
+		const contentTrimmed = newSubtaskContent.trim();
+		if (!contentTrimmed) {
+			alert('Subtask content cannot be blank.');
+			creatingSubtask = false;
+			return;
+		}
+		const duplicateSubtask = (latestSubtasks ?? []).some(
+			(st) => st.content.trim().toLowerCase() === contentTrimmed.toLowerCase()
+		);
+		if (duplicateSubtask) {
+			alert('A subtask with this content already exists under this task.');
+			creatingSubtask = false;
+			return;
+		}
+
+		// ----------------------------------------------------
+
 		if (atIndex !== null) {
 			sort_index = atIndex + 1;
 			console.log('Creating subtask with assigned_to:', newSubtaskAssignedTo);
