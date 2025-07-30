@@ -1,6 +1,14 @@
-Save Subtask function saveSubtaskEdit(): 1. Validation: blank and duplicate title
-Save Subtask function saveSubtaskEdit(): 2. it flickers when save subttask, it does not when saving tasks.
+Removed from DB table project_users:
 
+Admin can remove editor/viewer
+Admin can update editor/viewer only
+Owner can remove any member
+Owner can update any role
 
+Removed from DB table user_roles:
+UserRoles: Admin delete
+UserRoles: Admin insert
+UserRoles: Admin update
 
 Items - duplicate items are allowed, it should not be.
+

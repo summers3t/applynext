@@ -8,8 +8,6 @@
 	import { goto } from '$app/navigation';
 	import { statusFilter, dueFilter, searchQuery } from '$lib/filterStore';
 	import ItemChecklist from '$lib/components/ItemChecklist.svelte';
-	//export let onSave: (task: any) => Promise<void>;
-	//export let closeModal: () => void;
 
 	// ========== Project Info & Members ==========
 	type Member = {
