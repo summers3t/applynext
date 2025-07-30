@@ -1,0 +1,6 @@
+Save Subtask function saveSubtaskEdit(): 1. Validation: blank and duplicate title
+Save Subtask function saveSubtaskEdit(): 2. it flickers when save subttask, it does not when saving tasks.
+
+
+
+Items - duplicate items are allowed, it should not be.

@@ -598,10 +598,193 @@
 	$: if (insertSubtaskRowEl) {
 		insertSubtaskRowEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
+	// -----------------------------------------------------------------------------------------------.
+	// ---------------------------right pane edit task subtask----------------------------------------.
+	// -----------------------------------------------------------------------------------------------.
+	let editingTaskRP = false; // Tracks if we're editing the task in right pane
+	let editingSubtaskRP = false; // Tracks if we're editing the subtask in right pane
+	// Local edit buffers tasks
+	let editTaskTitleRP = '';
+	let editTaskDescriptionRP = '';
+	let editTaskStatusRP: 'open' | 'in_progress' | 'done' = 'open';
+	let editTaskDueDateRP: string | null = null;
+	let editTaskAssignedToRP = '';
+	// Local edit buffers subtasks
+	let editSubtaskContentRP = '';
+	let editSubtaskStatusRP: 'open' | 'in_progress' | 'done' = 'open';
+	let editSubtaskDueDateRP: string | null = null;
+	let editSubtaskAssignedToRP = '';
 
-	// -------------------------------------------------------------------------------------------.
+	$: if (selectedTask) {
+		editTaskTitleRP = selectedTask.title ?? '';
+		editTaskDescriptionRP = selectedTask.description ?? '';
+		editTaskStatusRP = selectedTask.status ?? 'open';
+		editTaskDueDateRP = selectedTask.due_date ?? null;
+		editTaskAssignedToRP = selectedTask.assigned_to ?? '';
+	}
+	$: if (selectedSubtask) {
+		editSubtaskContentRP = selectedSubtask.content ?? '';
+		editSubtaskStatusRP = selectedSubtask.status ?? 'open';
+		editSubtaskDueDateRP = selectedSubtask.due_date ?? null;
+		editSubtaskAssignedToRP = selectedSubtask.assigned_to ?? '';
+	}
+	$: isTaskChanged =
+		editTaskTitleRP.trim() !== (selectedTask?.title ?? '').trim() ||
+		editTaskDescriptionRP.trim() !== (selectedTask?.description ?? '').trim() ||
+		editTaskStatusRP !== (selectedTask?.status ?? '') ||
+		editTaskAssignedToRP !== (selectedTask?.assigned_to ?? '') ||
+		(editTaskDueDateRP || '') !== (selectedTask?.due_date || '');
+	$: isSubtaskChanged =
+		editSubtaskContentRP.trim() !== (selectedSubtask?.content ?? '').trim() ||
+		editSubtaskStatusRP !== (selectedSubtask?.status ?? '') ||
+		editSubtaskAssignedToRP !== (selectedSubtask?.assigned_to ?? '') ||
+		(editSubtaskDueDateRP ?? '') !== (selectedSubtask?.due_date ?? '');
 
-	// -------------------------------------------------------------------------------------------.
+	async function saveTaskEdit() {
+		// ---- edit task ---------------
+		// --------- Right Pane Save button save button -------------
+		isSaving = true;
+
+		// 1. Validation: blank and duplicate title
+		const titleTrimmed = editTaskTitleRP.trim();
+		if (!titleTrimmed) {
+			alert('Task title cannot be blank.');
+			isSaving = false;
+			return;
+		}
+		const duplicate = tasks.some(
+			(t) =>
+				t.id !== selectedTask?.id && t.title.trim().toLowerCase() === titleTrimmed.toLowerCase()
+		);
+		if (duplicate) {
+			alert('A task with this title already exists.');
+			isSaving = false;
+			return;
+		}
+
+		// 2. Update Supabase
+		const { error } = await supabase
+			.from('tasks')
+			.update({
+				title: editTaskTitleRP,
+				description: editTaskDescriptionRP,
+				status: editTaskStatusRP,
+				due_date: editTaskDueDateRP,
+				assigned_to: editTaskAssignedToRP || null
+			})
+			.eq('id', selectedTask?.id);
+
+		if (error) {
+			alert('Error updating task: ' + error.message);
+			isSaving = false;
+			return;
+		}
+
+		// 3. Update local tasks array (for instant UI)
+		const idx = tasks.findIndex((t) => t.id === selectedTask?.id);
+		if (idx !== -1) {
+			tasks[idx] = {
+				...tasks[idx],
+				title: editTaskTitleRP,
+				description: editTaskDescriptionRP,
+				status: editTaskStatusRP,
+				due_date: editTaskDueDateRP,
+				assigned_to: editTaskAssignedToRP
+			};
+			tasks = [...tasks]; // trigger reactivity
+		}
+
+		// 4. Exit edit mode/reset flags if you use any
+		isSaving = false;
+	}
+
+	async function saveSubtaskEdit() {
+		isSaving = true;
+
+		// 1. Validation: blank and duplicate content
+		const contentTrimmed = editSubtaskContentRP.trim();
+		if (!contentTrimmed) {
+			alert('Subtask content cannot be blank.');
+			isSaving = false;
+			return;
+		}
+		const parentTask = tasks.find((t) => t.id === selected?.parentTaskId);
+		const duplicateSubtask = parentTask?.subtasks.some(
+			(st) =>
+				st.id !== selectedSubtask?.id &&
+				st.content.trim().toLowerCase() === contentTrimmed.toLowerCase()
+		);
+		if (duplicateSubtask) {
+			alert('A subtask with this content already exists under this task.');
+			isSaving = false;
+			return;
+		}
+
+		// 2. Update Supabase
+		const { error } = await supabase
+			.from('subtasks')
+			.update({
+				content: editSubtaskContentRP,
+				status: editSubtaskStatusRP,
+				due_date: editSubtaskDueDateRP,
+				last_edited_by: sessionValue?.user.id,
+				assigned_to: editSubtaskAssignedToRP || null
+			})
+			.eq('id', selectedSubtask?.id)
+			.eq('project_id', projectId);
+
+		isSaving = false;
+		if (error) {
+			alert('Error updating subtask: ' + error.message);
+			return;
+		}
+
+		// 3. Patch local data (NO fetchTasks, NO resetting selected)
+		if (parentTask && selectedSubtask) {
+			const subIdx = parentTask.subtasks.findIndex((st) => st.id === selectedSubtask.id);
+			if (subIdx !== -1) {
+				parentTask.subtasks[subIdx] = {
+					...parentTask.subtasks[subIdx],
+					content: editSubtaskContentRP,
+					status: editSubtaskStatusRP,
+					due_date: editSubtaskDueDateRP,
+					last_edited_by: sessionValue?.user.id,
+					assigned_to: editSubtaskAssignedToRP || null,
+					updated_at: new Date().toISOString()
+				};
+				// To trigger Svelte reactivity
+				tasks = tasks.map((t) =>
+					t.id === parentTask.id ? { ...t, subtasks: [...parentTask.subtasks] } : t
+				);
+			}
+		}
+		// 4. DO NOT clear selection or edit buffer—UI remains steady
+	}
+
+	function cancelTaskEdit() {
+		if (!selectedTask) return;
+
+		editTaskTitleRP = selectedTask.title ?? '';
+		editTaskDescriptionRP = selectedTask.description ?? '';
+		editTaskStatusRP = selectedTask.status ?? 'open';
+		editTaskDueDateRP = selectedTask.due_date ?? null;
+		editTaskAssignedToRP = selectedTask.assigned_to ?? '';
+
+		selected = null; // Hides the right pane
+	}
+
+	function cancelSubtaskEdit() {
+		if (!selectedSubtask) return;
+
+		editSubtaskContentRP = selectedSubtask?.content ?? '';
+		editSubtaskStatusRP = selectedSubtask?.status ?? 'open';
+		editSubtaskDueDateRP = selectedSubtask?.due_date ?? null;
+		editSubtaskAssignedToRP = selectedSubtask?.assigned_to ?? '';
+
+		selected = null;
+	}
+
+	// -----------------------------------------------------------------------------------------------.
 
 	// Add Improved Scroll-to-Visible for Status Dot Popover.
 
@@ -1422,14 +1605,6 @@
 
 		// --- Add links to items for this task ---
 		if (newTaskSelectedItemIds && newTaskSelectedItemIds.length > 0) {
-			console.log(
-				'[DEBUG] Linking items:',
-				newTaskSelectedItemIds,
-				'for task:',
-				inserted.id,
-				'in project:',
-				projectId
-			);
 			const links = newTaskSelectedItemIds.map((item_id) => ({
 				task_id: inserted.id,
 				item_id,
@@ -1667,14 +1842,6 @@
 
 		// Insert new links, if any
 		if (editTaskSelectedItemIds && editTaskSelectedItemIds.length > 0) {
-			console.log(
-				'[DEBUG] Updating linked items:',
-				editTaskSelectedItemIds,
-				'for task:',
-				editingTaskId,
-				'in project:',
-				projectId
-			);
 			const links = editTaskSelectedItemIds.map((item_id) => ({
 				task_id: editingTaskId,
 				item_id,
@@ -1934,13 +2101,18 @@
 	}
 
 	function handleAddSubtaskClick() {
-		if (!selected || selected.type !== 'task') return;
+		if (!selected) return;
 
-		const sel = selected!; // TypeScript: safe
-		const parentTask = tasks.find((t) => t.id === sel.id);
-		const stIdx = parentTask ? parentTask.subtasks.length - 1 : -1;
-
-		showInsertSubtaskForm(sel.id, stIdx);
+		if (selected.type === 'subtask' && selected.parentTaskId) {
+			const parentTask = tasks.find((t) => t.id === selected?.parentTaskId);
+			const stIdx = parentTask?.subtasks.findIndex((st) => st.id === selected?.id) ?? -1;
+			showInsertSubtaskForm(selected.parentTaskId, stIdx);
+		} else if (selected.type === 'task') {
+			const parentTask = tasks.find((t) => t.id === selected?.id);
+			const lastIdx =
+				parentTask && parentTask.subtasks.length > 0 ? parentTask.subtasks.length - 1 : -1;
+			showInsertSubtaskForm(selected.id, lastIdx);
+		}
 	}
 
 	function handleMoveUpClick() {
@@ -2063,7 +2235,7 @@
 						on:click={handleAddSubtaskClick}
 						disabled={!canEditTasks() ||
 							!selected ||
-							selected.type !== 'task' ||
+							!(selected.type === 'task' || selected.type === 'subtask') ||
 							editingTaskId !== null ||
 							editingSubtaskId !== null}
 					>
@@ -2777,21 +2949,96 @@
 			</div>
 		</div>
 
-		<!-- --------------- Right side pane right pane ------------- -->
+		<!-- -------------------------------------------------------------------------------------------------------- -->
+		<!-- --------------------------------- Right side pane right pane ------------------------------------- -->
 		<aside class="right-pane">
 			{#if selected}
 				<div class="right-pane-inner">
-					<!-- Section Header -->
+					<!-- -------- Section ----------- Header -->
 					<div class="details-section">
 						<div class="section-header">
-							<span class="section-icon">📝</span>
+							<!-- <span class="section-icon">📝</span> -->
 							<span class="section-title">
-								{selected.type === 'task' ? 'Task Details' : 'Subtask Details'}
+								{selected.type === 'task' ? 'Task' : 'Subtask'}
 							</span>
+
+							<!-- --------------- Edit Name/Content ------ block ------------------- -->
+							<!-- -------------------T-Name, ST-Content-------------------------------->
+							{#if selected && selected.type === 'task' && selectedTask}
+								{#if editingTaskRP}
+									<input
+										type="text"
+										bind:value={editTaskTitleRP}
+										placeholder="Task name"
+										required
+										maxlength="80"
+										style="width:100%;font-weight:600;"
+									/>
+								{:else}
+									<span style="margin-left:0.8em;font-weight:bold;font-size:1.1em;">
+										{selectedTask.title}
+										<button
+											class="edit-title-btn"
+											title="Edit task name"
+											on:click={() => {
+												editingTaskRP = true;
+												editTaskTitleRP = selectedTask.title;
+											}}
+											style="margin-left: 0.5em; background: none; border: none; color: #1976d2; cursor: pointer;"
+										>
+											✏️
+										</button>
+									</span>
+								{/if}
+							{:else if selected && selected.type === 'subtask' && selectedSubtask}
+								{#if editingSubtaskRP}
+									<input
+										type="text"
+										bind:value={editSubtaskContentRP}
+										placeholder="Task name"
+										required
+										maxlength="80"
+										style="width:100%;font-weight:600;"
+									/>
+								{:else}
+									<span style="margin-left:0.8em;font-weight:bold;font-size:1.1em;">
+										{selectedSubtask.content}
+										<button
+											class="edit-title-btn"
+											title="Edit task name"
+											on:click={() => {
+												editingSubtaskRP = true;
+												editSubtaskContentRP = selectedSubtask.content;
+											}}
+											style="margin-left: 0.5em; background: none; border: none; color: #1976d2; cursor: pointer;"
+										>
+											✏️
+										</button>
+									</span>
+								{/if}
+							{/if}
+
+							<!-- ------------------------- Status --------- block ------------- -->
+							<!-- ----------------------------------------------------------------->
+							{#if selected && selected.type === 'task' && selectedTask}
+								<select bind:value={editTaskStatusRP} style="margin-left:0.5em;">
+									<option value="open">Open</option>
+									<option value="in_progress">In Progress</option>
+									<option value="done">Done</option>
+								</select>
+							{:else if selected && selected.type === 'subtask' && selectedSubtask}
+								<select bind:value={editSubtaskStatusRP} style="margin-left:0.5em;">
+									<option value="open">Open</option>
+									<option value="in_progress">In Progress</option>
+									<option value="done">Done</option>
+								</select>
+							{/if}
+							<!-- ----------------------------------------------------------------->
 						</div>
 
-						<!-- Created by Block -->
-						{#if selected.type === 'task' && selectedTask}
+						<!-- ----------------------- Created by --------- block ------------- -->
+						<!-- ------------------------------------------------------------------->
+						{#if selected && selected.type === 'task' && selectedTask}
 							<div class="created-by-line">
 								<b>Created by:</b>
 								{#if selectedTask.created_by_email}
@@ -2804,7 +3051,7 @@
 									—
 								{/if}
 							</div>
-						{:else if selected.type === 'subtask' && selectedSubtask}
+						{:else if selected && selected.type === 'subtask' && selectedSubtask}
 							<div class="created-by-line">
 								Created by:
 								{#if selectedSubtask.created_by_email}
@@ -2819,20 +3066,58 @@
 							</div>
 						{/if}
 
-						<!-- Task Description -->
-						{#if selected.type === 'task' && selectedTask}
+						<!-- ------------------------- Assigned to ------- block ------------ -->
+						<!-- ------------------------------------------------------------------->
+						{#if selected && selected.type === 'task' && selectedTask}
+							<select bind:value={editTaskAssignedToRP} style="margin-left:0.5em;">
+								<option value="">Unassigned</option>
+								{#each members as m}
+									{#if m.user_id}
+										<option value={m.user_id}>{m.email}</option>
+									{/if}
+								{/each}
+							</select>
+						{:else if selected && selected.type === 'subtask' && selectedSubtask}
+							<select bind:value={editSubtaskAssignedToRP} style="margin-left:0.5em;">
+								<option value="">Unassigned</option>
+								{#each members as m}
+									{#if m.user_id}
+										<option value={m.user_id}>{m.email}</option>
+									{/if}
+								{/each}
+							</select>
+						{/if}
+
+						<!-- --------------- Due date ------- block -------- -->
+						<!-- -------------------------------------------------->
+						{#if selected && selected.type === 'task' && selectedTask}
+							<input type="date" bind:value={editTaskDueDateRP} style="margin-left:0.5em;" />
+						{:else if selected && selected.type === 'subtask' && selectedSubtask}
+							<input type="date" bind:value={editSubtaskDueDateRP} style="margin-left:0.5em;" />
+						{/if}
+
+						<!-- ------------ Description ------- block -------- -->
+						<!-- -------------------------------------------------->
+						{#if selected && selected.type === 'task' && selectedTask}
 							<div class="task-description-block">
 								<b>Description:</b>
 								{#if selectedTask.description?.trim()}
-									<span style="margin-left: 0.5em;">{selectedTask.description}</span>
+									<textarea
+										bind:value={editTaskDescriptionRP}
+										maxlength="200"
+										rows="2"
+										placeholder="Description (optional)"
+										style="width:100%;margin-top:0.5em;"
+									></textarea>
 								{:else}
 									<span style="color:#888; margin-left:0.5em;">(No description provided)</span>
 								{/if}
 							</div>
 						{/if}
 
-						<!-- Task Items Block -->
-						{#if selected.type === 'task' && selectedTask}
+						<!-- ------------- Task Items ------- Block --------- -->
+						<!-- --------------------------------------------------->
+						{#if selected && selected.type === 'task' && selectedTask}
 							<div class="task-items-block">
 								<b>Items required for this task:</b>
 								{#if items.length === 0}
@@ -2895,7 +3180,8 @@
 					<!-- Section Divider -->
 					<!-- <div class="section-divider"></div> -->
 
-					<!-- Comments Section -->
+					<!-- ----------------- Comments ------ block -------- -->
+					<!-- --------------------------------------------------->
 					<section class="comments-section">
 						<h4>Comments</h4>
 						{#if loadingComments}
@@ -2937,9 +3223,46 @@
 							</button>
 						</form>
 					</section>
+
+					<!-- ----------------------- save button and cancel button -------------------------- -->
+					<!-- ----------------------------------------------------------------------------->
+					<div class="right-pane-actions" style="display: flex; gap: 1em; margin: 2em 0 0 0;">
+						{#if selected.type === 'task' && selectedTask}
+							<button
+								type="button"
+								class="toolbar-btn"
+								on:click={saveTaskEdit}
+								disabled={!isTaskChanged || savingEdit}
+							>
+								Save
+							</button>
+						{:else if selected.type === 'subtask' && selectedSubtask}
+							<button
+								type="button"
+								class="toolbar-btn"
+								on:click={saveSubtaskEdit}
+								disabled={!isSubtaskChanged || savingEdit}
+							>
+								Save
+							</button>
+						{/if}
+
+						{#if selected.type === 'task' && selectedTask}
+							<button type="button" class="toolbar-btn" on:click={cancelTaskEdit}> Cancel </button>
+						{:else if selected.type === 'subtask' && selectedSubtask}
+							<button type="button" class="toolbar-btn" on:click={cancelSubtaskEdit}>
+								Cancel
+							</button>
+						{/if}
+
+						<!-- <button type="button" class="toolbar-btn" on:click={cancelTaskEdit}> Cancel </button> -->
+					</div>
+					<!-- ----------------------------------------------------------------------------->
 				</div>
 			{/if}
 		</aside>
+
+		<!-- -------------------------------------------------------------------------------------------------------- -->
 
 		<!-- Members panel members -->
 		{#if showMembersPanel}
@@ -3976,11 +4299,11 @@
 		background: none;
 	}
 
-	.section-icon {
+	/* .section-icon {
 		font-size: 1.35em;
 		margin-right: 0.1em;
 		opacity: 0.82;
-	}
+	} */
 
 	.section-title {
 		color: #2b3867;
