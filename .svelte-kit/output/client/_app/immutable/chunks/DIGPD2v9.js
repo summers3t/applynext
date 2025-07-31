@@ -1,1 +1,0 @@
-import{w as o}from"./C9sUR3Xw.js";import{s as t}from"./Dew1yWqH.js";const e=o(null);t.auth.getSession().then(({data:{session:s}})=>{e.set(s)}),t.auth.onAuthStateChange((s,a)=>{e.set(a)});export{e as s};
