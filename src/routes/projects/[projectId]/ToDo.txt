@@ -5,10 +5,13 @@ Admin can update editor/viewer only
 Owner can remove any member
 Owner can update any role
 
+
 Removed from DB table user_roles:
+
 UserRoles: Admin delete
 UserRoles: Admin insert
 UserRoles: Admin update
+
 
 Items - duplicate items are allowed, it should not be.
 
